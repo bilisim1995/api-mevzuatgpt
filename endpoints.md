@@ -212,3 +212,73 @@ GET /api/v1/announcements?kurum_id={id}
 
 ---
 
+## 5. Linkler Listesi
+
+### Endpoint
+```
+GET /api/v1/links
+```
+
+### Request
+```
+GET /api/v1/links?kurum_id={id}
+```
+
+**Query Parameters:**
+- `kurum_id` (opsiyonel): Kurum ID'si ile filtreleme
+
+**Headers:** Yok
+
+**Body:** Yok
+
+### Response
+
+**Success (200 OK)**
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": "link-id-1",
+      "baslik": "Yararlı Link Başlığı 1",
+      "aciklama": "Bu linkin açıklaması burada yer alır",
+      "url": "https://example.com/link1",
+      "kurumId": "68bbf6df8ef4e8023c19641d",
+      "createdAt": "2024-01-15T10:30:00Z"
+    },
+    {
+      "id": "link-id-2",
+      "baslik": "Yararlı Link Başlığı 2",
+      "aciklama": "Başka bir linkin detaylı açıklaması",
+      "url": "https://example.com/link2",
+      "kurumId": "68bbf6df8ef4e8023c19641d",
+      "createdAt": "2024-01-10T14:20:00Z"
+    }
+  ],
+  "count": 2,
+  "message": "İşlem başarılı"
+}
+```
+
+**Boş Liste (200 OK)**
+```json
+{
+  "success": true,
+  "data": [],
+  "count": 0,
+  "message": "İşlem başarılı"
+}
+```
+
+**Error (500 Internal Server Error)**
+```json
+{
+  "success": false,
+  "data": [],
+  "count": null,
+  "message": "Linkler alınamadı"
+}
+```
+
+---
+

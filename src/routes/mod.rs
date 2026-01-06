@@ -8,6 +8,7 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
             .service(web::scope("/v1/institutions").configure(handlers::kurum::routes))
             .service(web::scope("/v1/documents").configure(handlers::document::routes))
             .service(web::scope("/v1/announcements").configure(handlers::announcement::routes))
+            .service(web::scope("/v1/links").configure(handlers::link::routes))
             // Yeni route'lar buraya eklenecek
     );
 }
