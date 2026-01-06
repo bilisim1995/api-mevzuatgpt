@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 // Her model için ayrı dosya oluşturabilirsiniz
 
 pub mod kurum;
+pub mod document;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ApiResponse<T> {

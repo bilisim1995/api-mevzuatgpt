@@ -1,0 +1,214 @@
+use actix_web::{web, HttpResponse};
+use mongodb::{Collection, bson::{doc, Document as MongoDocument}};
+use crate::config::AppState;
+use crate::models::document::{DocumentResponse, DocumentsListResponse};
+
+#[derive(serde::Deserialize)]
+pub struct DocumentQuery {
+    pub kurum_id: Option<String>,
+    pub limit: Option<u64>,
+    pub sort_by: Option<String>,
+    pub sort_order: Option<String>,
+}
+
+pub async fn get_documents(
+    state: web::Data<AppState>,
+    query: web::Query<DocumentQuery>,
+) -> HttpResponse {
+    let metadata_collection: Collection<MongoDocument> = state.db.collection("metadata");
+
+    // Query parametrelerini al
+    let limit = query.limit.unwrap_or(10000);
+    let sort_by = query.sort_by.as_deref().unwrap_or("olusturulma_tarihi");
+    let sort_order = query.sort_order.as_deref().unwrap_or("desc");
+    let sort_value = if sort_order == "asc" { 1 } else { -1 };
+
+    // Match stage için filter oluştur
+    let mut match_filter = doc! {};
+    
+    if let Some(kurum_id) = &query.kurum_id {
+        match_filter.insert("kurum_id", kurum_id);
+    }
+
+    // Aggregation pipeline oluştur
+    let mut pipeline = vec![
+        doc! { "$match": match_filter },
+        doc! {
+            "$addFields": {
+                "kurum_id_object": {
+                    "$toObjectId": "$kurum_id"
+                }
+            }
+        },
+        doc! { "$sort": { sort_by: sort_value } },
+        doc! { "$limit": limit as i64 },
+        doc! {
+            "$lookup": {
+                "from": "kurumlar",
+                "localField": "kurum_id_object",
+                "foreignField": "_id",
+                "as": "kurum_bilgisi"
+            }
+        },
+        doc! {
+            "$unwind": {
+                "path": "$kurum_bilgisi",
+                "preserveNullAndEmptyArrays": true
+            }
+        },
+    ];
+
+    // Aggregation çalıştır
+    let mut cursor = match metadata_collection.aggregate(pipeline, None).await {
+        Ok(cursor) => cursor,
+        Err(e) => {
+            log::error!("MongoDB aggregation hatası: {}", e);
+            return HttpResponse::InternalServerError().json(DocumentsListResponse {
+                success: false,
+                data: vec![],
+                count: None,
+                message: "Belgeler alınamadı".to_string(),
+            });
+        }
+    };
+
+    let mut documents: Vec<DocumentResponse> = Vec::new();
+
+    // Sonuçları işle
+    while let Ok(true) = cursor.advance().await {
+        if let Ok(doc_bson) = cursor.deserialize_current() {
+            // Document'i parse et
+            let doc_map = match doc_bson.as_document() {
+                Some(d) => d,
+                None => continue,
+            };
+
+            // Kurum bilgilerini al
+            let kurum_adi = doc_map
+                .get_document("kurum_bilgisi")
+                .and_then(|k| k.get_str("kurum_adi").ok())
+                .unwrap_or("")
+                .to_string();
+
+            let kurum_logo = doc_map
+                .get_document("kurum_bilgisi")
+                .and_then(|k| k.get_str("kurum_logo").ok())
+                .unwrap_or("")
+                .to_string();
+
+            let kurum_aciklama = doc_map
+                .get_document("kurum_bilgisi")
+                .and_then(|k| k.get_str("aciklama").ok())
+                .unwrap_or("")
+                .to_string();
+
+            // Document ID
+            let id = doc_map
+                .get_object_id("_id")
+                .map(|oid| oid.to_hex())
+                .unwrap_or_default();
+
+            // Diğer alanları al
+            let kurum_id = doc_map
+                .get_str("kurum_id")
+                .unwrap_or("")
+                .to_string();
+
+            let pdf_adi = doc_map
+                .get_str("pdf_adi")
+                .unwrap_or("")
+                .to_string();
+
+            let etiketler = doc_map
+                .get_str("etiketler")
+                .unwrap_or("")
+                .to_string();
+
+            let belge_yayin_tarihi = doc_map
+                .get_str("belge_yayin_tarihi")
+                .unwrap_or("")
+                .to_string();
+
+            let belge_durumu = doc_map
+                .get_str("belge_durumu")
+                .unwrap_or("")
+                .to_string();
+
+            let aciklama = doc_map
+                .get_str("aciklama")
+                .unwrap_or("")
+                .to_string();
+
+            let url_slug = doc_map
+                .get_str("url_slug")
+                .unwrap_or("")
+                .to_string();
+
+            let belge_turu = doc_map
+                .get_str("belge_turu")
+                .unwrap_or("")
+                .to_string();
+
+            let anahtar_kelimeler = doc_map
+                .get_str("anahtar_kelimeler")
+                .unwrap_or("")
+                .to_string();
+
+            let status = doc_map
+                .get_str("status")
+                .unwrap_or("")
+                .to_string();
+
+            let sayfa_sayisi = doc_map
+                .get_i32("sayfa_sayisi")
+                .unwrap_or(0);
+
+            let dosya_boyutu_mb = doc_map
+                .get_f64("dosya_boyutu_mb")
+                .unwrap_or(0.0);
+
+            let pdf_url = doc_map
+                .get_str("pdf_url")
+                .unwrap_or("")
+                .to_string();
+
+            documents.push(DocumentResponse {
+                id,
+                kurum_id,
+                kurum_adi,
+                kurum_logo,
+                kurum_aciklama,
+                pdf_adi,
+                etiketler,
+                belge_yayin_tarihi,
+                belge_durumu,
+                aciklama,
+                url_slug,
+                belge_turu,
+                anahtar_kelimeler,
+                status,
+                sayfa_sayisi,
+                dosya_boyutu_mb,
+                pdf_url,
+            });
+        }
+    }
+
+    // Toplam sayıyı al (pagination için)
+    let count = match metadata_collection.count_documents(match_filter.clone(), None).await {
+        Ok(count) => Some(count),
+        Err(_) => None,
+    };
+
+    HttpResponse::Ok().json(DocumentsListResponse {
+        success: true,
+        data: documents,
+        count,
+        message: "İşlem başarılı".to_string(),
+    })
+}
+
+pub fn routes(cfg: &mut web::ServiceConfig) {
+    cfg.route("", web::get().to(get_documents));
+}
+
