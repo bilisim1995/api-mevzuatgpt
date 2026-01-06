@@ -39,12 +39,12 @@ GET /api/health
 
 ### Endpoint
 ```
-GET /api/kurumlar
+GET /api/v1/institutions
 ```
 
 ### Request
 ```
-GET /api/kurumlar
+GET /api/v1/institutions
 ```
 
 **Headers:** Yok
@@ -143,6 +143,70 @@ GET /api/v1/documents?kurum_id={id}&limit=10000&sort_by=olusturulma_tarihi&sort_
   "data": [],
   "count": null,
   "message": "Belgeler alınamadı"
+}
+```
+
+---
+
+## 4. Duyurular Listesi
+
+### Endpoint
+```
+GET /api/v1/announcements
+```
+
+### Request
+```
+GET /api/v1/announcements?kurum_id={id}
+```
+
+**Query Parameters:**
+- `kurum_id` (opsiyonel): Kurum ID'si ile filtreleme
+
+**Headers:** Yok
+
+**Body:** Yok
+
+### Response
+
+**Success (200 OK)**
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "baslik": "Duyuru Başlığı 1",
+      "link": "https://example.com/duyuru/1",
+      "tarih": "2024-01-15"
+    },
+    {
+      "baslik": "Duyuru Başlığı 2",
+      "link": "https://example.com/duyuru/2",
+      "tarih": "2024-01-10"
+    }
+  ],
+  "count": 2,
+  "message": "İşlem başarılı"
+}
+```
+
+**Boş Liste (200 OK)**
+```json
+{
+  "success": true,
+  "data": [],
+  "count": 0,
+  "message": "İşlem başarılı"
+}
+```
+
+**Error (500 Internal Server Error)**
+```json
+{
+  "success": false,
+  "data": [],
+  "count": null,
+  "message": "Duyurular alınamadı"
 }
 ```
 

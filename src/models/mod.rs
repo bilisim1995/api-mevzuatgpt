@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod kurum;
 pub mod document;
+pub mod announcement;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ApiResponse<T> {

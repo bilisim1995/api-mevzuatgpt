@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use bson::oid::ObjectId;
 
+#[allow(dead_code)]
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Document {

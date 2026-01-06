@@ -30,8 +30,11 @@ pub async fn get_documents(
         match_filter.insert("kurum_id", kurum_id);
     }
 
+    // Count için filter'ı klonla (pipeline'da move edilecek)
+    let count_filter = match_filter.clone();
+
     // Aggregation pipeline oluştur
-    let mut pipeline = vec![
+    let pipeline = vec![
         doc! { "$match": match_filter },
         doc! {
             "$addFields": {
@@ -76,28 +79,25 @@ pub async fn get_documents(
 
     // Sonuçları işle
     while let Ok(true) = cursor.advance().await {
-        if let Ok(doc_bson) = cursor.deserialize_current() {
-            // Document'i parse et
-            let doc_map = match doc_bson.as_document() {
-                Some(d) => d,
-                None => continue,
-            };
-
+        if let Ok(doc_map) = cursor.deserialize_current() {
             // Kurum bilgilerini al
             let kurum_adi = doc_map
                 .get_document("kurum_bilgisi")
+                .ok()
                 .and_then(|k| k.get_str("kurum_adi").ok())
                 .unwrap_or("")
                 .to_string();
 
             let kurum_logo = doc_map
                 .get_document("kurum_bilgisi")
+                .ok()
                 .and_then(|k| k.get_str("kurum_logo").ok())
                 .unwrap_or("")
                 .to_string();
 
             let kurum_aciklama = doc_map
                 .get_document("kurum_bilgisi")
+                .ok()
                 .and_then(|k| k.get_str("aciklama").ok())
                 .unwrap_or("")
                 .to_string();
@@ -195,7 +195,7 @@ pub async fn get_documents(
     }
 
     // Toplam sayıyı al (pagination için)
-    let count = match metadata_collection.count_documents(match_filter.clone(), None).await {
+    let count = match metadata_collection.count_documents(count_filter, None).await {
         Ok(count) => Some(count),
         Err(_) => None,
     };

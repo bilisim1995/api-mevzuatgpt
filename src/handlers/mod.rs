@@ -4,6 +4,7 @@
 pub mod health;
 pub mod kurum;
 pub mod document;
+pub mod announcement;
 
 // Yeni handler'lar eklendikçe buraya ekleyin
 
