@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 // Bu modül veri modellerinizi içerecek
 // Her model için ayrı dosya oluşturabilirsiniz
 
+pub mod kurum;
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ApiResponse<T> {
     pub success: bool,
