@@ -123,14 +123,17 @@ GET /api/v1/documents
 
 ### Request
 ```
-GET /api/v1/documents?kurum_id={id}&limit=10000&sort_by=olusturulma_tarihi&sort_order=desc
+GET /api/v1/documents?kurum_id={id}&limit=12&offset=0&sort_by=olusturulma_tarihi&sort_order=desc&belge_turu=Genelge&etiketler=2024
 ```
 
 **Query Parameters:**
 - `kurum_id` (opsiyonel): Kurum ID'si ile filtreleme
 - `limit` (opsiyonel, varsayılan: 10000): Maksimum kayıt sayısı
+- `offset` (opsiyonel, varsayılan: 0): Sayfalama için atlanacak kayıt sayısı
 - `sort_by` (opsiyonel, varsayılan: olusturulma_tarihi): Sıralama alanı
 - `sort_order` (opsiyonel, varsayılan: desc): Sıralama yönü (asc/desc)
+- `belge_turu` (opsiyonel): Belge türüne göre filtreleme (tam eşleşme)
+- `etiketler` (opsiyonel): Etiketlere göre filtreleme (virgülle ayrılmış string içinde arama, case-insensitive)
 
 **Headers:** Yok
 
@@ -144,23 +147,26 @@ GET /api/v1/documents?kurum_id={id}&limit=10000&sort_by=olusturulma_tarihi&sort_
   "success": true,
   "data": [
     {
-      "id": "68bc2e010ba7fbdd9f7d41f7",
-      "kurumId": "68bbf6df8ef4e8023c19641d",
-      "kurumAdi": "Sosyal Güvenlik Kurumu",
-      "kurumLogo": "https://cdn.mevzuatgpt.org/portal/kurum_Sosyal%20G%C3%BCvenlik%20Kurumu_b98c7ed9-4bfc-42af-8cbf-550bd9e1885f.svg",
-      "kurumAciklama": "sgk.gov.tr",
-      "pdfAdi": "2016-21 - Kısa Vadeli Sigorta Kolları Uygulamaları",
-      "etiketler": "2016-21",
-      "belgeYayinTarihi": "2016-01-01",
-      "belgeDurumu": "Yürürlükte",
-      "aciklama": "T C Sosyal Güvenli k Kurumu Emeklilik Hizmetleri Genel Müdürlüğü 2016 21 SAYILI GENELGE...",
-      "urlSlug": "2016-21-kisa-vadeli-sigorta-kollari-uygulamalari",
-      "belgeTuru": "Genelge",
-      "anahtarKelimeler": "sayılı, kazası, göremezlik, meslek, sağlık...",
-      "status": "aktif",
-      "sayfaSayisi": 111,
-      "dosyaBoyutuMb": 1.33,
-      "pdfUrl": "https://cdn.mevzuatgpt.org/portal/2016-21%20-%20K%C4%B1sa%20Vadeli%20Sigorta%20Kollar%C4%B1%20Uygulamalar%C4%B1_68bc2e010ba7fbdd9f7d41f7.pdf"
+      "url_slug": "belge-url-slug",
+      "pdf_adi": "Belge Başlığı",
+      "aciklama": "Belge açıklaması",
+      "belge_yayin_tarihi": "2024-01-15",
+      "belge_turu": "Genelge",
+      "belge_durumu": "Yürürlükte",
+      "etiketler": "etiket1, etiket2, etiket3",
+      "anahtar_kelimeler": "anahtar1, anahtar2",
+      "pdf_url": "https://example.com/document.pdf"
+    },
+    {
+      "url_slug": "belge-url-slug-2",
+      "pdf_adi": "Başka Bir Belge",
+      "aciklama": "Başka bir belge açıklaması",
+      "belge_yayin_tarihi": "2024-01-10",
+      "belge_turu": "Yönetmelik",
+      "belge_durumu": "Değiştirilmiş",
+      "etiketler": "etiket4, etiket5",
+      "anahtar_kelimeler": "anahtar3",
+      "pdf_url": "https://example.com/document2.pdf"
     }
   ],
   "count": 150,
@@ -177,6 +183,76 @@ GET /api/v1/documents?kurum_id={id}&limit=10000&sort_by=olusturulma_tarihi&sort_
   "message": "Belgeler alınamadı"
 }
 ```
+
+---
+
+## 3.1. Belgeler Filtre Listesi
+
+### Endpoint
+```
+GET /api/v1/documents/filters
+```
+
+### Request
+```
+GET /api/v1/documents/filters?kurum_id={id}
+```
+
+**Query Parameters:**
+- `kurum_id` (opsiyonel): Kurum ID'si ile filtreleme (belirtilirse sadece o kuruma ait unique değerler döner)
+
+**Headers:** Yok
+
+**Body:** Yok
+
+### Response
+
+**Success (200 OK)**
+```json
+{
+  "success": true,
+  "data": {
+    "belge_turu": [
+      "Genelge",
+      "Yönetmelik",
+      "Tebliğ",
+      "Kanun",
+      "Karar",
+      "Yönerge",
+      "Belirtilmemiş"
+    ],
+    "etiketler": [
+      "2024",
+      "2025",
+      "duyuru",
+      "güncelleme",
+      "yeni",
+      "önemli"
+    ]
+  },
+  "message": "Filtre listeleri başarıyla alındı",
+  "error": null
+}
+```
+
+**Error (500 Internal Server Error)**
+```json
+{
+  "success": false,
+  "data": {
+    "belge_turu": [],
+    "etiketler": []
+  },
+  "message": null,
+  "error": "Belge türü listesi alınamadı"
+}
+```
+
+**Notlar:**
+- `belge_turu` listesi alfabetik olarak sıralanır
+- `etiketler` listesi virgülle ayrılmış string'lerden parse edilir ve unique değerler alfabetik olarak sıralanır
+- Boş `belge_turu` değerleri "Belirtilmemiş" olarak gösterilir
+- `kurum_id` belirtilirse sadece o kuruma ait belgelerden unique değerler çıkarılır
 
 ---
 

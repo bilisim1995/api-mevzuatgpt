@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod kurum;
 pub mod document;
+pub mod document_filters;
 pub mod announcement;
 pub mod link;
 pub mod regulation;
