@@ -8,7 +8,6 @@ pub struct SearchResult {
     pub kurum_adi: String,
     pub match_type: String,
     pub content_preview: String,
-    pub relevance_score: f64,
     pub relevance_percentage: u64,
     pub match_count: u64,
     pub url_slug: String,

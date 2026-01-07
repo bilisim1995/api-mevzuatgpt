@@ -30,14 +30,12 @@ pub async fn search(
     let limit = query.limit.unwrap_or(10000);
     let offset = query.offset.unwrap_or(0);
     let search_query = query.q.trim();
-    let search_query_lower = search_query.to_lowercase();
 
     let metadata_collection: Collection<MongoDocument> = state.db.collection("metadata");
-    let content_collection: Collection<MongoDocument> = state.db.collection("content");
     let kurum_collection: Collection<MongoDocument> = state.db.collection("kurumlar");
 
-    // Regex pattern oluştur (case-insensitive)
-    let regex_pattern = format!(r"(?i){}", regex::escape(search_query));
+    // Gelişmiş regex pattern oluştur (yakın eşleşmeler için)
+    let regex_pattern = build_advanced_regex_pattern(search_query);
     let regex_obj = match Regex::new(&regex_pattern) {
         Ok(re) => re,
         Err(_) => {
@@ -50,14 +48,63 @@ pub async fn search(
         }
     };
 
-    // 1. Metadata'da arama yap (pdf_adi, anahtar_kelimeler, etiketler, aciklama)
-    let mut match_filter = doc! {
-        "$or": [
-            { "pdf_adi": doc! { "$regex": &regex_pattern, "$options": "i" } },
-            { "anahtar_kelimeler": doc! { "$regex": &regex_pattern, "$options": "i" } },
-            { "etiketler": doc! { "$regex": &regex_pattern, "$options": "i" } },
-            { "aciklama": doc! { "$regex": &regex_pattern, "$options": "i" } }
-        ]
+    // 1. Metadata'da arama yap (sadece pdf_adi ve aciklama)
+    // Gelişmiş regex: her kelime için ayrı pattern (yakın eşleşme)
+    let mongo_patterns = build_mongodb_regex_patterns(search_query);
+    
+    let mut match_filter = if mongo_patterns.is_empty() {
+        // Tek kelime veya boş ise basit pattern
+        doc! {
+            "$or": [
+                { "pdf_adi": doc! { "$regex": &regex_pattern, "$options": "i" } },
+                { "aciklama": doc! { "$regex": &regex_pattern, "$options": "i" } }
+            ]
+        }
+    } else if mongo_patterns.len() == 1 {
+        // Tek kelime için basit pattern (daha hızlı)
+        let pattern = &mongo_patterns[0];
+        doc! {
+            "$or": [
+                { "pdf_adi": doc! { "$regex": pattern, "$options": "i" } },
+                { "aciklama": doc! { "$regex": pattern, "$options": "i" } }
+            ]
+        }
+    } else {
+        // Çoklu kelime için: her kelime için ayrı $and koşulu
+        let mut or_conditions = Vec::new();
+        
+        // pdf_adi için: tüm kelimeler geçmeli
+        let mut pdf_adi_conditions = Vec::new();
+        for pattern in &mongo_patterns {
+            pdf_adi_conditions.push(doc! {
+                "pdf_adi": doc! { "$regex": pattern, "$options": "i" }
+            });
+        }
+        if !pdf_adi_conditions.is_empty() {
+            or_conditions.push(doc! { "$and": pdf_adi_conditions });
+        }
+        
+        // aciklama için: tüm kelimeler geçmeli
+        let mut aciklama_conditions = Vec::new();
+        for pattern in &mongo_patterns {
+            aciklama_conditions.push(doc! {
+                "aciklama": doc! { "$regex": pattern, "$options": "i" }
+            });
+        }
+        if !aciklama_conditions.is_empty() {
+            or_conditions.push(doc! { "$and": aciklama_conditions });
+        }
+        
+        if or_conditions.is_empty() {
+            doc! {
+                "$or": [
+                    { "pdf_adi": doc! { "$regex": &regex_pattern, "$options": "i" } },
+                    { "aciklama": doc! { "$regex": &regex_pattern, "$options": "i" } }
+                ]
+            }
+        } else {
+            doc! { "$or": or_conditions }
+        }
     };
 
     if let Some(kurum_id) = &query.kurum_id {
@@ -143,69 +190,102 @@ pub async fn search(
         };
 
         // Match type ve match count hesapla
+        // MongoDB pattern'lerini kullanarak her kelime için ayrı kontrol
+        let mongo_patterns = build_mongodb_regex_patterns(search_query);
         let mut match_types: Vec<String> = Vec::new();
-        let mut match_count = 0u64;
+        
+        // Ağırlıklı puanlama için ayrı ayrı sayılar
+        let mut title_count = 0u64;
+        let mut content_count = 0u64;
 
-        // Title match
-        if regex_obj.is_match(&pdf_adi.to_lowercase()) {
-            match_types.push("title".to_string());
-            match_count += regex_obj.find_iter(&pdf_adi.to_lowercase()).count() as u64;
-        }
-
-        // Keyword match
-        if let Ok(keywords) = metadata_doc.get_str("anahtar_kelimeler") {
-            if regex_obj.is_match(&keywords.to_lowercase()) {
-                match_types.push("keyword".to_string());
-                match_count += regex_obj.find_iter(&keywords.to_lowercase()).count() as u64;
+        // Title match (pdf_adi) - tüm kelimeler geçmeli
+        let pdf_adi_lower = pdf_adi.to_lowercase();
+        let mut title_matches = true;
+        
+        if mongo_patterns.is_empty() {
+            // Tek kelime veya basit pattern
+            if regex_obj.is_match(&pdf_adi_lower) {
+                match_types.push("title".to_string());
+                title_count = regex_obj.find_iter(&pdf_adi_lower).count() as u64;
             }
-        }
-
-        // Tag match
-        if let Ok(etiketler) = metadata_doc.get_str("etiketler") {
-            if regex_obj.is_match(&etiketler.to_lowercase()) {
-                match_types.push("tag".to_string());
-                match_count += regex_obj.find_iter(&etiketler.to_lowercase()).count() as u64;
-            }
-        }
-
-        // Content match - content koleksiyonunda ara
-        let mut content_preview = String::new();
-        let content_match_filter = doc! {
-            "url_slug": url_slug,
-            "icerik": doc! { "$regex": &regex_pattern, "$options": "i" }
-        };
-
-        if let Ok(Some(content_doc)) = content_collection.find_one(content_match_filter, None).await {
-            if let Ok(icerik) = content_doc.get_str("icerik") {
-                match_types.push("content".to_string());
-                match_count += regex_obj.find_iter(&icerik.to_lowercase()).count() as u64;
-                
-                // Content preview oluştur (arama teriminin geçtiği kısmı al)
-                let icerik_lower = icerik.to_lowercase();
-                if let Some(mat) = regex_obj.find(&icerik_lower) {
-                    let start = mat.start().saturating_sub(100);
-                    let end = (mat.end() + 100).min(icerik.len());
-                    let preview = &icerik[start..end];
-                    content_preview = format!("...{}...", preview);
+        } else {
+            // Çoklu kelime: her kelime için ayrı kontrol
+            // MongoDB pattern formatı: ".*kelime.*" -> sadece "kelime" kısmını al
+            for pattern in &mongo_patterns {
+                // Pattern'den kelimeyi çıkar: ".*kısa.*" -> "kısa"
+                let word = pattern.trim_start_matches(".*").trim_end_matches(".*");
+                if pdf_adi_lower.contains(&word.to_lowercase()) {
+                    title_count += pdf_adi_lower.matches(&word.to_lowercase()).count() as u64;
                 } else {
-                    content_preview = icerik.chars().take(200).collect::<String>();
-                    if icerik.len() > 200 {
+                    title_matches = false;
+                    break;
+                }
+            }
+            if title_matches && title_count > 0 {
+                match_types.push("title".to_string());
+            }
+        }
+
+        // Content match (aciklama) - tüm kelimeler geçmeli
+        let mut content_preview = String::new();
+        if let Ok(aciklama) = metadata_doc.get_str("aciklama") {
+            let aciklama_lower = aciklama.to_lowercase();
+            let mut content_matches = true;
+            
+            if mongo_patterns.is_empty() {
+                // Tek kelime veya basit pattern
+                if regex_obj.is_match(&aciklama_lower) {
+                    match_types.push("content".to_string());
+                    content_count = regex_obj.find_iter(&aciklama_lower).count() as u64;
+                    
+                    // Content preview oluştur
+                    if let Some(mat) = regex_obj.find(&aciklama_lower) {
+                        let start = mat.start().saturating_sub(100);
+                        let end = (mat.end() + 100).min(aciklama.len());
+                        content_preview = format!("...{}...", &aciklama[start..end]);
+                    } else {
+                        content_preview = aciklama.chars().take(200).collect::<String>();
+                        if aciklama.len() > 200 {
+                            content_preview.push_str("...");
+                        }
+                    }
+                } else {
+                    // Eşleşme yoksa da preview göster
+                    content_preview = aciklama.chars().take(200).collect::<String>();
+                    if aciklama.len() > 200 {
                         content_preview.push_str("...");
                     }
                 }
-            }
-        }
-
-        // Eğer content preview yoksa, aciklama'dan al
-        if content_preview.is_empty() {
-            if let Ok(aciklama) = metadata_doc.get_str("aciklama") {
-                if regex_obj.is_match(&aciklama.to_lowercase()) {
-                    let start = aciklama.to_lowercase().find(&search_query_lower)
-                        .unwrap_or(0)
-                        .saturating_sub(50);
-                    let end = (start + 200).min(aciklama.len());
-                    content_preview = format!("...{}...", &aciklama[start..end]);
+            } else {
+                // Çoklu kelime: her kelime için ayrı kontrol
+                // MongoDB pattern formatı: ".*kelime.*" -> sadece "kelime" kısmını al
+                for pattern in &mongo_patterns {
+                    // Pattern'den kelimeyi çıkar: ".*kısa.*" -> "kısa"
+                    let word = pattern.trim_start_matches(".*").trim_end_matches(".*");
+                    if aciklama_lower.contains(&word.to_lowercase()) {
+                        content_count += aciklama_lower.matches(&word.to_lowercase()).count() as u64;
+                    } else {
+                        content_matches = false;
+                        break;
+                    }
+                }
+                if content_matches && content_count > 0 {
+                    match_types.push("content".to_string());
+                    
+                    // Content preview oluştur (ilk kelimeyi bul)
+                    let first_word = mongo_patterns[0].trim_start_matches(".*").trim_end_matches(".*");
+                    if let Some(pos) = aciklama_lower.find(&first_word.to_lowercase()) {
+                        let start = pos.saturating_sub(100);
+                        let end = (pos + first_word.len() + 100).min(aciklama.len());
+                        content_preview = format!("...{}...", &aciklama[start..end]);
+                    } else {
+                        content_preview = aciklama.chars().take(200).collect::<String>();
+                        if aciklama.len() > 200 {
+                            content_preview.push_str("...");
+                        }
+                    }
                 } else {
+                    // Eşleşme yoksa da preview göster
                     content_preview = aciklama.chars().take(200).collect::<String>();
                     if aciklama.len() > 200 {
                         content_preview.push_str("...");
@@ -214,13 +294,30 @@ pub async fn search(
             }
         }
 
-        // Relevance score hesapla (0-1 arası)
-        // Match count ve match type sayısına göre
-        let match_type_count = match_types.len() as f64;
-        let base_score = (match_count as f64) / (match_count as f64 + 1.0);
-        let type_bonus = match_type_count * 0.2; // Her match type için 0.2 bonus
-        let relevance_score = (base_score + type_bonus).min(1.0);
+        // Ağırlıklı puanlama ile relevance percentage hesapla
+        // Title ağırlığı: 0.7, Content ağırlığı: 0.3
+        const TITLE_WEIGHT: f64 = 0.7;
+        const CONTENT_WEIGHT: f64 = 0.3;
+        
+        // Her alanın kendi base score'unu hesapla
+        let title_base_score = if title_count > 0 {
+            title_count as f64 / (title_count as f64 + 1.0)
+        } else {
+            0.0
+        };
+        
+        let content_base_score = if content_count > 0 {
+            content_count as f64 / (content_count as f64 + 1.0)
+        } else {
+            0.0
+        };
+        
+        // Ağırlıklı ortalama
+        let relevance_score = (title_base_score * TITLE_WEIGHT) + (content_base_score * CONTENT_WEIGHT);
         let relevance_percentage = (relevance_score * 100.0) as u64;
+        
+        // Toplam match count (hem title hem content için)
+        let match_count = title_count + content_count;
 
         let belge_yayin_tarihi = metadata_doc
             .get_str("belge_yayin_tarihi")
@@ -257,7 +354,6 @@ pub async fn search(
             kurum_adi,
             match_type: match_types.join(","),
             content_preview,
-            relevance_score,
             relevance_percentage,
             match_count,
             url_slug: url_slug.clone(),
@@ -269,10 +365,9 @@ pub async fn search(
         });
     }
 
-    // Relevance score'a göre sırala (yüksekten düşüğe)
+    // Relevance percentage'a göre sırala (yüksekten düşüğe)
     results.sort_by(|a, b| {
-        b.relevance_score.partial_cmp(&a.relevance_score)
-            .unwrap_or(std::cmp::Ordering::Equal)
+        b.relevance_percentage.cmp(&a.relevance_percentage)
     });
 
     // Response oluştur
@@ -292,6 +387,81 @@ pub async fn search(
     }
 
     response
+}
+
+// Gelişmiş regex pattern oluşturma fonksiyonu
+// Türkçe karakter normalizasyonu ve partial matching için
+fn build_advanced_regex_pattern(query: &str) -> String {
+    // Türkçe karakterleri normalize et
+    let normalized = normalize_turkish_chars(query);
+    
+    // Kelimelere ayır
+    let words: Vec<&str> = normalized.split_whitespace().collect();
+    
+    if words.is_empty() {
+        return format!(r"(?i){}", regex::escape(query));
+    }
+    
+    // Her kelime için pattern oluştur
+    let word_patterns: Vec<String> = words
+        .iter()
+        .filter(|w| w.len() >= 2) // Minimum 2 karakter
+        .map(|word| {
+            let escaped = regex::escape(word);
+            // Partial matching: kelime başlangıcı veya içinde geçmesi
+            // Türkçe karakter varyasyonlarını da kapsar
+            format!(r"(?i).*?{}.*?", escaped)
+        })
+        .collect();
+    
+    if word_patterns.is_empty() {
+        format!(r"(?i){}", regex::escape(query))
+    } else {
+        // Tüm kelimelerin geçmesi için AND mantığı (her kelime ayrı ayrı aranır)
+        // MongoDB'de $and kullanacağız, bu yüzden her kelime için ayrı pattern
+        word_patterns.join("")
+    }
+}
+
+// Türkçe karakterleri normalize et (yakın eşleşme için)
+fn normalize_turkish_chars(text: &str) -> String {
+    text.chars()
+        .map(|c| match c {
+            'ı' | 'İ' | 'I' | 'i' => 'i',
+            'ş' | 'Ş' => 's',
+            'ğ' | 'Ğ' => 'g',
+            'ü' | 'Ü' => 'u',
+            'ö' | 'Ö' => 'o',
+            'ç' | 'Ç' => 'c',
+            _ => c.to_lowercase().next().unwrap_or(c),
+        })
+        .collect()
+}
+
+// Türkçe karakterli regex pattern oluştur
+// Sadece Türkçe karakterleri destekler (normalize edilmiş versiyon yok)
+fn build_turkish_char_pattern(word: &str) -> String {
+    let word_lower = word.to_lowercase();
+    // Sadece orijinal Türkçe karakterli versiyonu kullan
+    regex::escape(&word_lower)
+}
+
+
+// MongoDB için gelişmiş regex pattern oluştur (her kelime için ayrı)
+// Sadece Türkçe karakterleri destekler (normalize edilmiş versiyon yok)
+fn build_mongodb_regex_patterns(query: &str) -> Vec<String> {
+    let words: Vec<&str> = query.split_whitespace().collect();
+    
+    words
+        .iter()
+        .filter(|w| w.len() >= 2)
+        .map(|word| {
+            // Sadece Türkçe karakterli pattern (normalize edilmiş versiyon yok)
+            let pattern = build_turkish_char_pattern(word);
+            // MongoDB regex: başta, sonda veya ortada geçebilir
+            format!(r".*{}.*", pattern)
+        })
+        .collect()
 }
 
 pub fn routes(cfg: &mut web::ServiceConfig) {

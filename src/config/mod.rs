@@ -1,5 +1,6 @@
-use mongodb::{Client, Database};
+use mongodb::{Client, Database, options::ClientOptions};
 use std::env;
+use std::time::Duration;
 
 pub struct AppConfig {
     pub mongodb_uri: String,
@@ -41,7 +42,15 @@ pub struct AppState {
 
 impl AppState {
     pub async fn new(config: &AppConfig) -> Result<Self, Box<dyn std::error::Error>> {
-        let client = Client::with_uri_str(&config.mongodb_uri).await?;
+        // MongoDB client options ile timeout ayarları
+        let mut client_options = ClientOptions::parse(&config.mongodb_uri).await?;
+        
+        // Timeout ayarları (arama işlemleri uzun sürebilir)
+        client_options.server_selection_timeout = Some(Duration::from_secs(60)); // 60 saniye
+        client_options.connect_timeout = Some(Duration::from_secs(30)); // 30 saniye
+        // socket_timeout private field, MongoDB driver'ı otomatik yönetiyor
+        
+        let client = Client::with_options(client_options)?;
         let db = client.database(&config.mongodb_db_name);
 
         log::info!("MongoDB bağlantısı başarıyla kuruldu: {}", config.mongodb_db_name);
