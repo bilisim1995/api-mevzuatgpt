@@ -775,3 +775,120 @@ Endpoint farklı tarih formatlarını destekler:
 
 ---
 
+## 9. Autocomplete (Otomatik Tamamlama)
+
+### Endpoint
+```
+GET /api/v1/autocomplete
+```
+
+### Request
+```
+GET /api/v1/autocomplete?q=mevzuat&kurum_id=68bbf6df8ef4e8023c19641d&limit=10
+```
+
+**Query Parameters:**
+- `q` (zorunlu): Arama sorgusu (minimum 2 karakter)
+- `kurum_id` (zorunlu): Kurum ID'si (kurum detay sayfasında kullanıldığı için zorunlu)
+- `limit` (opsiyonel, varsayılan: 10): Maksimum öneri sayısı (maksimum 50)
+
+**Headers:** Yok
+
+**Body:** Yok
+
+### Response
+
+**Success (200 OK)**
+```json
+{
+  "success": true,
+  "suggestions": [
+    {
+      "text": "Mevzuat Başlığı 1",
+      "count": 15,
+      "type": "title"
+    },
+    {
+      "text": "mevzuat anahtar kelimesi",
+      "count": 8,
+      "type": "keyword"
+    },
+    {
+      "text": "2024",
+      "count": 25,
+      "type": "tag"
+    },
+    {
+      "text": "Mevzuat İçeriği Başlığı",
+      "count": 12,
+      "type": "content"
+    }
+  ],
+  "message": "İşlem başarılı"
+}
+```
+
+**Error - q Parametresi Eksik veya Çok Kısa (400 Bad Request)**
+```json
+{
+  "success": false,
+  "suggestions": [],
+  "message": "Arama sorgusu en az 2 karakter olmalıdır"
+}
+```
+
+**Error - kurum_id Parametresi Eksik (400 Bad Request)**
+```json
+{
+  "success": false,
+  "suggestions": [],
+  "message": "kurum_id parametresi zorunludur"
+}
+```
+
+**Error - Geçersiz Arama Sorgusu (500 Internal Server Error)**
+```json
+{
+  "success": false,
+  "suggestions": [],
+  "message": "Geçersiz arama sorgusu"
+}
+```
+
+### Alan Açıklamaları
+
+**Response seviyesi:**
+- `success`: boolean — İşlem başarı durumu
+- `suggestions`: array — `ApiAutocompleteSuggestion[]` dizisi
+- `message`: string — İşlem mesajı
+
+**ApiAutocompleteSuggestion objesi:**
+- `text`: string — Öneri metni (gösterilecek metin)
+- `count`: number — Bu öneri için eşleşen kayıt sayısı
+- `type`: string — Öneri türü:
+  - `"title"` — Belge başlığı (pdf_adi - metadata koleksiyonu)
+  - `"keyword"` — Anahtar kelime (anahtar_kelimeler - metadata koleksiyonu)
+  - `"tag"` — Etiket (etiketler - metadata koleksiyonu)
+  - `"content"` — İçerik (icerik - content koleksiyonu)
+
+### Özellikler
+
+1. **4 farklı tip öneri**: Title, keyword, tag, content
+2. **Case-insensitive arama**: Büyük/küçük harf duyarsız
+3. **Count bazlı sıralama**: Öneriler eşleşen kayıt sayısına göre sıralanır
+4. **Kurum bazlı filtreleme**: `kurum_id` zorunlu, sadece belirtilen kuruma ait öneriler döner
+5. **Limit kontrolü**: Maksimum 50 öneri döndürülür
+6. **Minimum karakter kontrolü**: Arama sorgusu en az 2 karakter olmalıdır
+7. **Content arama**: `content` koleksiyonunda `icerik` alanında arama yapılır
+
+### Notlar
+
+- Öneriler `count` değerine göre azalan sırada sıralanır
+- `limit` parametresi tüm tipler için toplam öneri sayısını sınırlar
+- `kurum_id` zorunludur (kurum detay sayfasında kullanıldığı için)
+- Anahtar kelimeler ve etiketler virgülle ayrılmış string'lerden parse edilir
+- Content önerileri için `content` koleksiyonunda `icerik` alanında arama yapılır ve `metadata` ile `url_slug` üzerinden join yapılır
+- Her öneri türü (`type`) JSON response'da belirtilir
+
+---
+

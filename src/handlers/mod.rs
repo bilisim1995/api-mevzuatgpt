@@ -9,6 +9,7 @@ pub mod link;
 pub mod regulation;
 pub mod statistics;
 pub mod kurum_duyuru;
+pub mod autocomplete;
 
 // Yeni handler'lar eklendikçe buraya ekleyin
 
