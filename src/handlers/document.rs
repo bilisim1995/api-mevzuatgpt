@@ -7,6 +7,7 @@ use crate::models::document::{DocumentResponse, DocumentsListResponse};
 pub struct DocumentQuery {
     pub kurum_id: Option<String>,
     pub limit: Option<u64>,
+    pub offset: Option<u64>,
     pub sort_by: Option<String>,
     pub sort_order: Option<String>,
 }
@@ -19,6 +20,7 @@ pub async fn get_documents(
 
     // Query parametrelerini al
     let limit = query.limit.unwrap_or(10000);
+    let offset = query.offset.unwrap_or(0);
     let sort_by = query.sort_by.as_deref().unwrap_or("olusturulma_tarihi");
     let sort_order = query.sort_order.as_deref().unwrap_or("desc");
     let sort_value = if sort_order == "asc" { 1 } else { -1 };
@@ -34,7 +36,7 @@ pub async fn get_documents(
     let count_filter = match_filter.clone();
 
     // Aggregation pipeline oluştur
-    let pipeline = vec![
+    let mut pipeline = vec![
         doc! { "$match": match_filter },
         doc! {
             "$addFields": {
@@ -44,7 +46,18 @@ pub async fn get_documents(
             }
         },
         doc! { "$sort": { sort_by: sort_value } },
-        doc! { "$limit": limit as i64 },
+    ];
+    
+    // Offset varsa $skip ekle
+    if offset > 0 {
+        pipeline.push(doc! { "$skip": offset as i64 });
+    }
+    
+    // Limit ekle
+    pipeline.push(doc! { "$limit": limit as i64 });
+    
+    // Lookup ve unwind ekle
+    pipeline.extend(vec![
         doc! {
             "$lookup": {
                 "from": "kurumlar",
@@ -59,7 +72,7 @@ pub async fn get_documents(
                 "preserveNullAndEmptyArrays": true
             }
         },
-    ];
+    ]);
 
     // Aggregation çalıştır
     let mut cursor = match metadata_collection.aggregate(pipeline, None).await {
@@ -80,37 +93,9 @@ pub async fn get_documents(
     // Sonuçları işle
     while let Ok(true) = cursor.advance().await {
         if let Ok(doc_map) = cursor.deserialize_current() {
-            // Kurum bilgilerini al
-            let kurum_adi = doc_map
-                .get_document("kurum_bilgisi")
-                .ok()
-                .and_then(|k| k.get_str("kurum_adi").ok())
-                .unwrap_or("")
-                .to_string();
-
-            let kurum_logo = doc_map
-                .get_document("kurum_bilgisi")
-                .ok()
-                .and_then(|k| k.get_str("kurum_logo").ok())
-                .unwrap_or("")
-                .to_string();
-
-            let kurum_aciklama = doc_map
-                .get_document("kurum_bilgisi")
-                .ok()
-                .and_then(|k| k.get_str("aciklama").ok())
-                .unwrap_or("")
-                .to_string();
-
-            // Document ID
-            let id = doc_map
-                .get_object_id("_id")
-                .map(|oid| oid.to_hex())
-                .unwrap_or_default();
-
-            // Diğer alanları al
-            let kurum_id = doc_map
-                .get_str("kurum_id")
+            // Sadece istenen alanları al
+            let url_slug = doc_map
+                .get_str("url_slug")
                 .unwrap_or("")
                 .to_string();
 
@@ -119,8 +104,8 @@ pub async fn get_documents(
                 .unwrap_or("")
                 .to_string();
 
-            let etiketler = doc_map
-                .get_str("etiketler")
+            let aciklama = doc_map
+                .get_str("aciklama")
                 .unwrap_or("")
                 .to_string();
 
@@ -129,23 +114,18 @@ pub async fn get_documents(
                 .unwrap_or("")
                 .to_string();
 
+            let belge_turu = doc_map
+                .get_str("belge_turu")
+                .unwrap_or("")
+                .to_string();
+
             let belge_durumu = doc_map
                 .get_str("belge_durumu")
                 .unwrap_or("")
                 .to_string();
 
-            let aciklama = doc_map
-                .get_str("aciklama")
-                .unwrap_or("")
-                .to_string();
-
-            let url_slug = doc_map
-                .get_str("url_slug")
-                .unwrap_or("")
-                .to_string();
-
-            let belge_turu = doc_map
-                .get_str("belge_turu")
+            let etiketler = doc_map
+                .get_str("etiketler")
                 .unwrap_or("")
                 .to_string();
 
@@ -154,41 +134,20 @@ pub async fn get_documents(
                 .unwrap_or("")
                 .to_string();
 
-            let status = doc_map
-                .get_str("status")
-                .unwrap_or("")
-                .to_string();
-
-            let sayfa_sayisi = doc_map
-                .get_i32("sayfa_sayisi")
-                .unwrap_or(0);
-
-            let dosya_boyutu_mb = doc_map
-                .get_f64("dosya_boyutu_mb")
-                .unwrap_or(0.0);
-
             let pdf_url = doc_map
                 .get_str("pdf_url")
                 .unwrap_or("")
                 .to_string();
 
             documents.push(DocumentResponse {
-                id,
-                kurum_id,
-                kurum_adi,
-                kurum_logo,
-                kurum_aciklama,
-                pdf_adi,
-                etiketler,
-                belge_yayin_tarihi,
-                belge_durumu,
-                aciklama,
                 url_slug,
+                pdf_adi,
+                aciklama,
+                belge_yayin_tarihi,
                 belge_turu,
+                belge_durumu,
+                etiketler,
                 anahtar_kelimeler,
-                status,
-                sayfa_sayisi,
-                dosya_boyutu_mb,
                 pdf_url,
             });
         }
