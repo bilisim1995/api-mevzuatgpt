@@ -892,3 +892,126 @@ GET /api/v1/autocomplete?q=mevzuat&kurum_id=68bbf6df8ef4e8023c19641d&limit=10
 
 ---
 
+## 10. Search (Arama)
+
+### Endpoint
+```
+GET /api/v1/search
+```
+
+### Request
+```
+GET /api/v1/search?q=mevzuat&kurum_id=68bbf6df8ef4e8023c19641d&limit=12&offset=0
+```
+
+**Query Parameters:**
+- `q` (zorunlu): Arama sorgusu
+- `limit` (opsiyonel, varsayılan: 10000): Sayfa başına kayıt sayısı
+- `offset` (opsiyonel, varsayılan: 0): Sayfalama için atlanacak kayıt sayısı
+- `kurum_id` (opsiyonel): Belirli bir kurum için filtreleme
+
+**Headers:** Yok
+
+**Body:** Yok
+
+### Response
+
+**Success (200 OK)**
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": "unique-document-id",
+      "pdf_adi": "Mevzuat Başlığı",
+      "kurum_adi": "Kurum Adı",
+      "match_type": "title,content",
+      "content_preview": "Arama teriminin geçtiği içerik önizlemesi...",
+      "relevance_score": 0.95,
+      "relevance_percentage": 95,
+      "match_count": 3,
+      "url_slug": "mevzuat-basligi",
+      "belge_yayin_tarihi": "2024-01-15",
+      "etiketler": "etiket1,etiket2,etiket3",
+      "aciklama": "Belge açıklaması",
+      "belge_turu": "Genelge",
+      "belge_durumu": "Yürürlükte"
+    }
+  ],
+  "count": 150,
+  "message": "İşlem başarılı"
+}
+```
+
+**Response Headers:**
+- `X-Total-Count`: Toplam sonuç sayısı (string)
+
+**Error - q Parametresi Boş (400 Bad Request)**
+```json
+{
+  "success": false,
+  "data": [],
+  "count": 0,
+  "message": "Arama sorgusu boş olamaz"
+}
+```
+
+**Error - Geçersiz Arama Sorgusu (500 Internal Server Error)**
+```json
+{
+  "success": false,
+  "data": [],
+  "count": 0,
+  "message": "Geçersiz arama sorgusu"
+}
+```
+
+### Alan Açıklamaları
+
+**Response seviyesi:**
+- `success`: boolean — İşlem başarı durumu
+- `data`: array — `ApiSearchResult[]` dizisi
+- `count`: number — Toplam sonuç sayısı (header'daki `X-Total-Count` ile aynı)
+- `message`: string — İşlem mesajı
+
+**ApiSearchResult objesi:**
+- `id`: string — Belge benzersiz ID'si
+- `pdf_adi`: string — Belge başlığı
+- `kurum_adi`: string — Kurum adı
+- `match_type`: string — Eşleşme türleri (virgülle ayrılmış: "title", "content", "keyword", "tag")
+- `content_preview`: string — Arama teriminin geçtiği içerik önizlemesi
+- `relevance_score`: number — İlgililik skoru (0-1 arası)
+- `relevance_percentage`: number — İlgililik yüzdesi (0-100)
+- `match_count`: number — Eşleşme sayısı
+- `url_slug`: string — Belge URL slug'ı
+- `belge_yayin_tarihi`: string (opsiyonel) — Yayın tarihi (ISO format)
+- `etiketler`: string (opsiyonel) — Virgülle ayrılmış etiketler
+- `aciklama`: string (opsiyonel) — Belge açıklaması
+- `belge_turu`: string (opsiyonel) — Belge türü
+- `belge_durumu`: string (opsiyonel) — Belge durumu (örn: "Yürürlükte", "Yürürlükten Kaldırıldı")
+
+### Özellikler
+
+1. **Çoklu alan arama**: `pdf_adi`, `anahtar_kelimeler`, `etiketler`, `aciklama` ve `icerik` alanlarında arama
+2. **Match type belirleme**: Eşleşmenin hangi alanlarda bulunduğunu gösterir
+3. **Relevance scoring**: Eşleşme sayısı ve türüne göre ilgililik skoru hesaplanır
+4. **Content preview**: Arama teriminin geçtiği içerik bölümü önizleme olarak gösterilir
+5. **Sayfalama**: `limit` ve `offset` parametreleri ile sayfalama desteği
+6. **Kurum bazlı filtreleme**: `kurum_id` ile belirli kuruma ait sonuçlar filtrelenebilir
+7. **X-Total-Count header**: Toplam sonuç sayısı header'da döner
+
+### Notlar
+
+- `match_type` alanı, eşleşmenin nerede bulunduğunu gösterir:
+  - `"title"` — Başlıkta eşleşme
+  - `"content"` — İçerikte eşleşme
+  - `"keyword"` — Anahtar kelimede eşleşme
+  - `"tag"` — Etikette eşleşme
+- Birden fazla eşleşme varsa virgülle ayrılır: `"title,content"`
+- Sonuçlar `relevance_score`'a göre azalan sırada sıralanır
+- `content_preview` önce `content` koleksiyonundan, yoksa `aciklama` alanından alınır
+- `relevance_score` hesaplaması: match count ve match type sayısına göre hesaplanır
+- Arama case-insensitive (büyük/küçük harf duyarsız) yapılır
+
+---
+
