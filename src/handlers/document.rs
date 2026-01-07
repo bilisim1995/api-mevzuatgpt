@@ -1,10 +1,14 @@
-use actix_web::{web, HttpResponse};
-use mongodb::{Collection, bson::{doc, Document as MongoDocument}};
+use actix_web::{web, HttpResponse, http::StatusCode};
+use mongodb::{Collection, bson::{doc, oid::ObjectId, Document as MongoDocument}};
 use crate::config::AppState;
-use crate::models::document::{DocumentResponse, DocumentsListResponse};
+use crate::models::document::{
+    DocumentResponse, DocumentsListResponse,
+    DocumentDetailResponse, DocumentDetailData, DocumentMetadata, DocumentContent
+};
 use crate::models::document_filters::{DocumentFiltersResponse, DocumentFiltersData};
 use std::collections::HashSet;
 use regex;
+use chrono::Utc;
 
 #[derive(serde::Deserialize)]
 pub struct DocumentQuery {
@@ -313,8 +317,390 @@ pub async fn get_document_filters(
     })
 }
 
+pub async fn get_document_by_slug(
+    state: web::Data<AppState>,
+    slug: web::Path<String>,
+) -> HttpResponse {
+    let metadata_collection: Collection<MongoDocument> = state.db.collection("metadata");
+    let content_collection: Collection<MongoDocument> = state.db.collection("content");
+    let kurum_collection: Collection<MongoDocument> = state.db.collection("kurumlar");
+
+    // Metadata'yı url_slug ile bul
+    let metadata_doc = match metadata_collection
+        .find_one(doc! { "url_slug": slug.as_str() }, None)
+        .await
+    {
+        Ok(Some(doc)) => doc,
+        Ok(None) => {
+            return HttpResponse::build(StatusCode::NOT_FOUND).json(DocumentDetailResponse {
+                success: false,
+                data: DocumentDetailData {
+                    metadata: DocumentMetadata {
+                        id: String::new(),
+                        kurum_id: String::new(),
+                        kurum_adi: String::new(),
+                        kurum_logo: String::new(),
+                        kurum_aciklama: String::new(),
+                        pdf_adi: String::new(),
+                        etiketler: String::new(),
+                        belge_yayin_tarihi: String::new(),
+                        belge_durumu: String::new(),
+                        aciklama: String::new(),
+                        url_slug: String::new(),
+                        belge_turu: String::new(),
+                        anahtar_kelimeler: String::new(),
+                        status: String::new(),
+                        sayfa_sayisi: 0,
+                        dosya_boyutu_mb: 0.0,
+                        pdf_url: String::new(),
+                    },
+                    content: DocumentContent {
+                        id: String::new(),
+                        metadata_id: String::new(),
+                        icerik: String::new(),
+                        olusturulma_tarihi: String::new(),
+                    },
+                    kurum_adi: String::new(),
+                    kurum_logo: String::new(),
+                    kurum_aciklama: String::new(),
+                },
+                message: "Belge bulunamadı".to_string(),
+            });
+        }
+        Err(e) => {
+            log::error!("MongoDB metadata sorgu hatası: {}", e);
+            return HttpResponse::InternalServerError().json(DocumentDetailResponse {
+                success: false,
+                data: DocumentDetailData {
+                    metadata: DocumentMetadata {
+                        id: String::new(),
+                        kurum_id: String::new(),
+                        kurum_adi: String::new(),
+                        kurum_logo: String::new(),
+                        kurum_aciklama: String::new(),
+                        pdf_adi: String::new(),
+                        etiketler: String::new(),
+                        belge_yayin_tarihi: String::new(),
+                        belge_durumu: String::new(),
+                        aciklama: String::new(),
+                        url_slug: String::new(),
+                        belge_turu: String::new(),
+                        anahtar_kelimeler: String::new(),
+                        status: String::new(),
+                        sayfa_sayisi: 0,
+                        dosya_boyutu_mb: 0.0,
+                        pdf_url: String::new(),
+                    },
+                    content: DocumentContent {
+                        id: String::new(),
+                        metadata_id: String::new(),
+                        icerik: String::new(),
+                        olusturulma_tarihi: String::new(),
+                    },
+                    kurum_adi: String::new(),
+                    kurum_logo: String::new(),
+                    kurum_aciklama: String::new(),
+                },
+                message: "Belge alınamadı".to_string(),
+            });
+        }
+    };
+
+    // Metadata'dan bilgileri çıkar
+    let metadata_id = metadata_doc
+        .get_object_id("_id")
+        .map(|oid| oid.to_hex())
+        .unwrap_or_default();
+
+    let kurum_id = metadata_doc
+        .get_str("kurum_id")
+        .unwrap_or("")
+        .to_string();
+
+    let pdf_adi = metadata_doc
+        .get_str("pdf_adi")
+        .unwrap_or("")
+        .to_string();
+
+    let belge_yayin_tarihi = metadata_doc
+        .get_str("belge_yayin_tarihi")
+        .unwrap_or("")
+        .to_string();
+
+    let etiketler = metadata_doc
+        .get_str("etiketler")
+        .unwrap_or("")
+        .to_string();
+
+    let aciklama = metadata_doc
+        .get_str("aciklama")
+        .unwrap_or("")
+        .to_string();
+
+    let belge_turu = metadata_doc
+        .get_str("belge_turu")
+        .unwrap_or("")
+        .to_string();
+
+    let belge_durumu = metadata_doc
+        .get_str("belge_durumu")
+        .unwrap_or("")
+        .to_string();
+
+    let url_slug = metadata_doc
+        .get_str("url_slug")
+        .unwrap_or("")
+        .to_string();
+
+    let anahtar_kelimeler = metadata_doc
+        .get_str("anahtar_kelimeler")
+        .unwrap_or("")
+        .to_string();
+
+    let status = metadata_doc
+        .get_str("status")
+        .unwrap_or("")
+        .to_string();
+
+    let sayfa_sayisi = metadata_doc
+        .get_i32("sayfa_sayisi")
+        .unwrap_or(0);
+
+    let dosya_boyutu_mb = metadata_doc
+        .get_f64("dosya_boyutu_mb")
+        .unwrap_or(0.0);
+
+    let pdf_url = metadata_doc
+        .get_str("pdf_url")
+        .unwrap_or("")
+        .to_string();
+
+    // Kurum bilgilerini al
+    let (kurum_adi, kurum_logo, kurum_aciklama) = if let Ok(kurum_oid) = ObjectId::parse_str(&kurum_id) {
+        match kurum_collection.find_one(doc! { "_id": kurum_oid }, None).await {
+            Ok(Some(kurum_doc)) => {
+                let kurum_adi = kurum_doc
+                    .get_str("kurum_adi")
+                    .or_else(|_| kurum_doc.get_str("kurumAdi"))
+                    .unwrap_or("")
+                    .to_string();
+                let kurum_logo = kurum_doc
+                    .get_str("kurum_logo")
+                    .or_else(|_| kurum_doc.get_str("kurumLogo"))
+                    .unwrap_or("")
+                    .to_string();
+                let kurum_aciklama = kurum_doc
+                    .get_str("aciklama")
+                    .or_else(|_| kurum_doc.get_str("kurumAciklama"))
+                    .unwrap_or("")
+                    .to_string();
+                (kurum_adi, kurum_logo, kurum_aciklama)
+            }
+            _ => (String::new(), String::new(), String::new()),
+        }
+    } else {
+        (String::new(), String::new(), String::new())
+    };
+
+    // Content'i metadata_id ile bul
+    // metadata_id hem ObjectId hem de string olarak saklanmış olabilir
+    let metadata_oid = metadata_doc
+        .get_object_id("_id")
+        .ok();
+    
+    let (content_id, icerik, content_olusturulma_tarihi) = if let Some(oid) = metadata_oid {
+        // Önce ObjectId ile dene
+        match content_collection
+            .find_one(doc! { "metadata_id": oid }, None)
+            .await
+        {
+            Ok(Some(content_doc)) => {
+                let content_id = content_doc
+                    .get_object_id("_id")
+                    .map(|oid| oid.to_hex())
+                    .unwrap_or_default();
+                
+                // icerik alanını farklı isimlerle deneyelim
+                let icerik = content_doc
+                    .get_str("icerik")
+                    .or_else(|_| content_doc.get_str("content"))
+                    .or_else(|_| content_doc.get_str("text"))
+                    .unwrap_or("")
+                    .to_string();
+                
+                // olusturulma_tarihi'ni ISO formatına çevir
+                let olusturulma_tarihi = match content_doc
+                    .get_str("olusturulma_tarihi")
+                    .or_else(|_| content_doc.get_str("created_at"))
+                {
+                    Ok(s) => {
+                        if s.contains('T') || s.contains('Z') {
+                            s.to_string()
+                        } else {
+                            format!("{}T00:00:00Z", s)
+                        }
+                    }
+                    Err(_) => {
+                        match metadata_doc.get_str("olusturulma_tarihi") {
+                            Ok(s) => {
+                                if s.contains('T') || s.contains('Z') {
+                                    s.to_string()
+                                } else {
+                                    format!("{}T00:00:00Z", s)
+                                }
+                            }
+                            Err(_) => String::from(Utc::now().to_rfc3339()),
+                        }
+                    }
+                };
+                
+                (content_id, icerik, olusturulma_tarihi)
+            }
+            _ => {
+                // ObjectId ile bulunamadıysa string ile dene
+                match content_collection
+                    .find_one(doc! { "metadata_id": &metadata_id }, None)
+                    .await
+                {
+                    Ok(Some(content_doc)) => {
+                        let content_id = content_doc
+                            .get_object_id("_id")
+                            .map(|oid| oid.to_hex())
+                            .unwrap_or_default();
+                        
+                        let icerik = content_doc
+                            .get_str("icerik")
+                            .or_else(|_| content_doc.get_str("content"))
+                            .or_else(|_| content_doc.get_str("text"))
+                            .unwrap_or("")
+                            .to_string();
+                        
+                        // olusturulma_tarihi'ni ISO formatına çevir
+                        let olusturulma_tarihi = content_doc
+                            .get_str("olusturulma_tarihi")
+                            .or_else(|_| content_doc.get_str("created_at"))
+                            .map(|s| {
+                                if s.contains('T') || s.contains('Z') {
+                                    s.to_string()
+                                } else {
+                                    format!("{}T00:00:00Z", s)
+                                }
+                            })
+                            .unwrap_or_else(|_| {
+                                match metadata_doc.get_str("olusturulma_tarihi") {
+                                    Ok(s) => {
+                                        if s.contains('T') || s.contains('Z') {
+                                            s.to_string()
+                                        } else {
+                                            format!("{}T00:00:00Z", s)
+                                        }
+                                    }
+                                    Err(_) => String::from(Utc::now().to_rfc3339()),
+                                }
+                            });
+                        
+                        (content_id, icerik, olusturulma_tarihi)
+                    }
+                    _ => {
+                        log::warn!("Content bulunamadı - metadata_id: {}", metadata_id);
+                        (String::new(), String::new(), String::new())
+                    }
+                }
+            }
+        }
+    } else {
+        // metadata_id ObjectId değilse string ile dene
+        match content_collection
+            .find_one(doc! { "metadata_id": &metadata_id }, None)
+            .await
+        {
+            Ok(Some(content_doc)) => {
+                let content_id = content_doc
+                    .get_object_id("_id")
+                    .map(|oid| oid.to_hex())
+                    .unwrap_or_default();
+                
+                let icerik = content_doc
+                    .get_str("icerik")
+                    .or_else(|_| content_doc.get_str("content"))
+                    .or_else(|_| content_doc.get_str("text"))
+                    .unwrap_or("")
+                    .to_string();
+                
+                // olusturulma_tarihi'ni ISO formatına çevir
+                let olusturulma_tarihi = match content_doc
+                    .get_str("olusturulma_tarihi")
+                    .or_else(|_| content_doc.get_str("created_at"))
+                {
+                    Ok(s) => {
+                        if s.contains('T') || s.contains('Z') {
+                            s.to_string()
+                        } else {
+                            format!("{}T00:00:00Z", s)
+                        }
+                    }
+                    Err(_) => {
+                        match metadata_doc.get_str("olusturulma_tarihi") {
+                            Ok(s) => {
+                                if s.contains('T') || s.contains('Z') {
+                                    s.to_string()
+                                } else {
+                                    format!("{}T00:00:00Z", s)
+                                }
+                            }
+                            Err(_) => String::from(Utc::now().to_rfc3339()),
+                        }
+                    }
+                };
+                
+                (content_id, icerik, olusturulma_tarihi)
+            }
+            _ => {
+                log::warn!("Content bulunamadı - metadata_id: {}", metadata_id);
+                (String::new(), String::new(), String::new())
+            }
+        }
+    };
+
+    HttpResponse::Ok().json(DocumentDetailResponse {
+        success: true,
+        data: DocumentDetailData {
+            metadata: DocumentMetadata {
+                id: metadata_id.clone(),
+                kurum_id: kurum_id.clone(),
+                kurum_adi: kurum_adi.clone(),
+                kurum_logo: kurum_logo.clone(),
+                kurum_aciklama: kurum_aciklama.clone(),
+                pdf_adi,
+                etiketler,
+                belge_yayin_tarihi,
+                belge_durumu,
+                aciklama,
+                url_slug,
+                belge_turu,
+                anahtar_kelimeler,
+                status,
+                sayfa_sayisi,
+                dosya_boyutu_mb,
+                pdf_url,
+            },
+            content: DocumentContent {
+                id: content_id,
+                metadata_id,
+                icerik,
+                olusturulma_tarihi: content_olusturulma_tarihi,
+            },
+            kurum_adi,
+            kurum_logo,
+            kurum_aciklama,
+        },
+        message: "İşlem başarılı".to_string(),
+    })
+}
+
 pub fn routes(cfg: &mut web::ServiceConfig) {
     cfg.route("", web::get().to(get_documents))
-        .route("/filters", web::get().to(get_document_filters));
+        .route("/filters", web::get().to(get_document_filters))
+        .route("/{slug}", web::get().to(get_document_by_slug));
 }
 

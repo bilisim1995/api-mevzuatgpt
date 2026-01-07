@@ -49,3 +49,52 @@ pub struct DocumentsListResponse {
     pub message: String,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct DocumentMetadata {
+    pub id: String,
+    pub kurum_id: String,
+    pub kurum_adi: String,
+    pub kurum_logo: String,
+    pub kurum_aciklama: String,
+    pub pdf_adi: String,
+    pub etiketler: String,
+    pub belge_yayin_tarihi: String,
+    pub belge_durumu: String,
+    pub aciklama: String,
+    pub url_slug: String,
+    pub belge_turu: String,
+    pub anahtar_kelimeler: String,
+    pub status: String,
+    pub sayfa_sayisi: i32,
+    pub dosya_boyutu_mb: f64,
+    pub pdf_url: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct DocumentContent {
+    pub id: String,
+    pub metadata_id: String,
+    pub icerik: String,
+    pub olusturulma_tarihi: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct DocumentDetailData {
+    pub metadata: DocumentMetadata,
+    pub content: DocumentContent,
+    pub kurum_adi: String,
+    pub kurum_logo: String,
+    pub kurum_aciklama: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct DocumentDetailResponse {
+    pub success: bool,
+    pub data: DocumentDetailData,
+    pub message: String,
+}
+
