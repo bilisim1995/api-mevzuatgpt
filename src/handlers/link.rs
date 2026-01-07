@@ -1,26 +1,52 @@
-use actix_web::{web, HttpResponse};
-use mongodb::{Collection, bson::{doc, Document as MongoDocument}};
+use actix_web::{web, HttpResponse, http::StatusCode};
+use mongodb::{Collection, bson::{doc, oid::ObjectId, Document as MongoDocument}};
 use crate::config::AppState;
 use crate::models::link::{LinkResponse, LinksListResponse};
 
 #[derive(serde::Deserialize)]
 pub struct LinkQuery {
-    pub kurum_id: Option<String>,
+    pub kurum_id: String,
 }
 
 pub async fn get_links(
     state: web::Data<AppState>,
     query: web::Query<LinkQuery>,
 ) -> HttpResponse {
-    // Koleksiyon adını dene: önce "kurum_link", sonra "links"
-    let collection: Collection<MongoDocument> = state.db.collection("kurum_link");
-
-    // Match stage için filter oluştur
-    let mut match_filter = doc! {};
-    
-    if let Some(kurum_id) = &query.kurum_id {
-        match_filter.insert("kurum_id", kurum_id);
+    // kurum_id zorunlu - zaten String olarak tanımlı, boş kontrolü yap
+    if query.kurum_id.is_empty() {
+        return HttpResponse::build(StatusCode::BAD_REQUEST).json(LinksListResponse {
+            success: false,
+            data: vec![],
+            count: 0,
+            message: None,
+            error: Some("kurum_id parameter is required".to_string()),
+        });
     }
+
+    // kurum_id'nin geçerli ObjectID formatında olup olmadığını kontrol et
+    let _kurum_object_id = match ObjectId::parse_str(&query.kurum_id) {
+        Ok(oid) => oid,
+        Err(_) => {
+            return HttpResponse::build(StatusCode::BAD_REQUEST).json(LinksListResponse {
+                success: false,
+                data: vec![],
+                count: 0,
+                message: None,
+                error: Some("Invalid kurum_id format".to_string()),
+            });
+        }
+    };
+
+    // links koleksiyonundan çek
+    let collection: Collection<MongoDocument> = state.db.collection("links");
+
+    // Match stage için filter oluştur - hem ObjectID hem string formatını dene
+    let match_filter = doc! {
+        "$or": [
+            { "kurum_id": _kurum_object_id },
+            { "kurum_id": query.kurum_id.clone() }
+        ]
+    };
 
     // Count için filter'ı klonla
     let count_filter = match_filter.clone();
@@ -28,7 +54,6 @@ pub async fn get_links(
     // Aggregation pipeline oluştur
     let pipeline = vec![
         doc! { "$match": match_filter },
-        doc! { "$sort": { "_id": -1 } }, // En yeni önce
     ];
 
     // Aggregation çalıştır
@@ -39,8 +64,9 @@ pub async fn get_links(
             return HttpResponse::InternalServerError().json(LinksListResponse {
                 success: false,
                 data: vec![],
-                count: None,
-                message: "Linkler alınamadı".to_string(),
+                count: 0,
+                message: None,
+                error: Some("Failed to fetch links".to_string()),
             });
         }
     };
@@ -56,11 +82,12 @@ pub async fn get_links(
                 .map(|oid| oid.to_hex())
                 .unwrap_or_default();
 
-            // Kurum ID
+            // Kurum ID - ObjectID olarak oku ve hex'e çevir
             let kurum_id = doc_map
-                .get_str("kurum_id")
-                .unwrap_or("")
-                .to_string();
+                .get_object_id("kurum_id")
+                .map(|oid| oid.to_hex())
+                .or_else(|_| doc_map.get_str("kurum_id").map(|s| s.to_string()))
+                .unwrap_or_else(|_| query.kurum_id.clone());
 
             // Baslik
             let baslik = doc_map
@@ -108,20 +135,30 @@ pub async fn get_links(
                 kurum_id,
                 created_at,
             });
+        } else {
+            log::error!("Link deserialize hatası");
+            return HttpResponse::InternalServerError().json(LinksListResponse {
+                success: false,
+                data: vec![],
+                count: 0,
+                message: None,
+                error: Some("Failed to decode links".to_string()),
+            });
         }
     }
 
     // Toplam sayıyı al
     let count = match collection.count_documents(count_filter, None).await {
-        Ok(count) => Some(count),
-        Err(_) => None,
+        Ok(count) => count,
+        Err(_) => links.len() as u64, // Fallback olarak mevcut liste uzunluğu
     };
 
     HttpResponse::Ok().json(LinksListResponse {
         success: true,
         data: links,
         count,
-        message: "İşlem başarılı".to_string(),
+        message: Some("Kurum linkleri başarıyla çekildi".to_string()),
+        error: None,
     })
 }
 

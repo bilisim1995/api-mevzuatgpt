@@ -16,7 +16,7 @@ pub struct KurumLink {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub struct LinkResponse {
     pub id: String,
     pub baslik: String,
@@ -27,12 +27,14 @@ pub struct LinkResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub struct LinksListResponse {
     pub success: bool,
     pub data: Vec<LinkResponse>,
+    pub count: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub count: Option<u64>,
-    pub message: String,
+    pub message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 

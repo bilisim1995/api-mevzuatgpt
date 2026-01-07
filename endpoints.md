@@ -253,11 +253,11 @@ GET /api/v1/links
 
 ### Request
 ```
-GET /api/v1/links?kurum_id={id}
+GET /api/v1/links?kurum_id=507f1f77bcf86cd799439020
 ```
 
 **Query Parameters:**
-- `kurum_id` (opsiyonel): Kurum ID'si ile filtreleme
+- `kurum_id` (zorunlu): Kurum ID'si (MongoDB ObjectID hex formatında)
 
 **Headers:** Yok
 
@@ -271,24 +271,33 @@ GET /api/v1/links?kurum_id={id}
   "success": true,
   "data": [
     {
-      "id": "link-id-1",
-      "baslik": "Yararlı Link Başlığı 1",
-      "aciklama": "Bu linkin açıklaması burada yer alır",
-      "url": "https://example.com/link1",
-      "kurumId": "68bbf6df8ef4e8023c19641d",
-      "createdAt": "2024-01-15T10:30:00Z"
+      "id": "507f1f77bcf86cd799439011",
+      "baslik": "E-Devlet Girişi",
+      "aciklama": "Kurumun e-devlet üzerinden hizmetlerine erişim",
+      "url": "https://www.turkiye.gov.tr/kurum-hizmetleri",
+      "kurum_id": "507f1f77bcf86cd799439020",
+      "created_at": "2024-01-15T10:30:00Z"
     },
     {
-      "id": "link-id-2",
-      "baslik": "Yararlı Link Başlığı 2",
-      "aciklama": "Başka bir linkin detaylı açıklaması",
-      "url": "https://example.com/link2",
-      "kurumId": "68bbf6df8ef4e8023c19641d",
-      "createdAt": "2024-01-10T14:20:00Z"
+      "id": "507f1f77bcf86cd799439012",
+      "baslik": "Online Başvuru Sistemi",
+      "aciklama": "Dijital başvuru ve takip sistemi",
+      "url": "https://basvuru.kurum.gov.tr",
+      "kurum_id": "507f1f77bcf86cd799439020",
+      "created_at": "2024-01-20T14:15:00Z"
+    },
+    {
+      "id": "507f1f77bcf86cd799439013",
+      "baslik": "Duyurular Sayfası",
+      "aciklama": "Kurum duyuru ve haberleri",
+      "url": "https://www.kurum.gov.tr/duyurular",
+      "kurum_id": "507f1f77bcf86cd799439020",
+      "created_at": "2024-02-01T09:00:00Z"
     }
   ],
-  "count": 2,
-  "message": "İşlem başarılı"
+  "count": 3,
+  "message": "Kurum linkleri başarıyla çekildi",
+  "error": null
 }
 ```
 
@@ -298,17 +307,52 @@ GET /api/v1/links?kurum_id={id}
   "success": true,
   "data": [],
   "count": 0,
-  "message": "İşlem başarılı"
+  "message": "Kurum linkleri başarıyla çekildi",
+  "error": null
 }
 ```
 
-**Error (500 Internal Server Error)**
+**Error - kurum_id Parametresi Eksik (400 Bad Request)**
 ```json
 {
   "success": false,
   "data": [],
-  "count": null,
-  "message": "Linkler alınamadı"
+  "count": 0,
+  "message": null,
+  "error": "kurum_id parameter is required"
+}
+```
+
+**Error - Geçersiz kurum_id Formatı (400 Bad Request)**
+```json
+{
+  "success": false,
+  "data": [],
+  "count": 0,
+  "message": null,
+  "error": "Invalid kurum_id format"
+}
+```
+
+**Error - Linkler Çekilemedi (500 Internal Server Error)**
+```json
+{
+  "success": false,
+  "data": [],
+  "count": 0,
+  "message": null,
+  "error": "Failed to fetch links"
+}
+```
+
+**Error - Veri Decode Hatası (500 Internal Server Error)**
+```json
+{
+  "success": false,
+  "data": [],
+  "count": 0,
+  "message": null,
+  "error": "Failed to decode links"
 }
 ```
 
