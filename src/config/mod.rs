@@ -12,11 +12,19 @@ impl AppConfig {
     pub fn from_env() -> Result<Self, Box<dyn std::error::Error>> {
         dotenv::dotenv().ok();
 
+        // Önce MONGODB_CONNECTION_STRING'i kontrol et, yoksa MONGODB_URI'yi dene
+        let mongodb_uri = env::var("MONGODB_CONNECTION_STRING")
+            .or_else(|_| env::var("MONGODB_URI"))
+            .unwrap_or_else(|_| "mongodb://localhost:27017".to_string());
+
+        // Önce MONGODB_DATABASE'i kontrol et, yoksa MONGODB_DB_NAME'i dene
+        let mongodb_db_name = env::var("MONGODB_DATABASE")
+            .or_else(|_| env::var("MONGODB_DB_NAME"))
+            .unwrap_or_else(|_| "mevzuatgpt".to_string());
+
         Ok(AppConfig {
-            mongodb_uri: env::var("MONGODB_URI")
-                .unwrap_or_else(|_| "mongodb://localhost:27017".to_string()),
-            mongodb_db_name: env::var("MONGODB_DB_NAME")
-                .unwrap_or_else(|_| "mevzuatgpt".to_string()),
+            mongodb_uri,
+            mongodb_db_name,
             port: env::var("PORT")
                 .unwrap_or_else(|_| "8080".to_string())
                 .parse()

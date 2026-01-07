@@ -25,11 +25,35 @@ GET /api/health
 
 ### Response
 
-**Success (200 OK)**
+**Success (200 OK) - Sunucu ve MongoDB Bağlantısı Başarılı**
 ```json
 {
-  "status": "ok",
-  "message": "API çalışıyor"
+  "success": true,
+  "server": {
+    "status": "running",
+    "message": "Sunucu çalışıyor"
+  },
+  "mongodb": {
+    "status": "connected",
+    "message": "MongoDB bağlantısı başarılı"
+  },
+  "message": "Sunucu ve MongoDB bağlantısı başarılı"
+}
+```
+
+**Success (200 OK) - MongoDB Bağlantısı Başarısız**
+```json
+{
+  "success": false,
+  "server": {
+    "status": "running",
+    "message": "Sunucu çalışıyor"
+  },
+  "mongodb": {
+    "status": "disconnected",
+    "message": "MongoDB bağlantı hatası: ..."
+  },
+  "message": "Sunucu çalışıyor ancak MongoDB bağlantısı başarısız"
 }
 ```
 
@@ -59,15 +83,22 @@ GET /api/v1/institutions
   "success": true,
   "data": [
     {
-      "id": "68bbf6df8ef4e8023c19641d",
-      "kurumAdi": "Sosyal Güvenlik Kurumu",
-      "kurumLogo": "https://cdn.mevzuatgpt.org/portal/kurum_Sosyal%20G%C3%BCvenlik%20Kurumu_b98c7ed9-4bfc-42af-8cbf-550bd9e1885f.svg",
-      "aciklama": "sgk.gov.tr",
-      "olusturulmaTarihi": "2025-09-06T08:54:55.403880",
+      "kurum_id": "68bbf6df8ef4e8023c19641d",
+      "kurum_adi": "Sosyal Güvenlik Kurumu",
+      "kurum_logo": "https://cdn.mevzuatgpt.org/portal/kurum_Sosyal%20G%C3%BCvenlik%20Kurumu_b98c7ed9-4bfc-42af-8cbf-550bd9e1885f.svg",
+      "kurum_aciklama": "sgk.gov.tr",
       "detsis": "22620739"
+    },
+    {
+      "kurum_id": "another-kurum-id",
+      "kurum_adi": "Kurum Adı 2",
+      "kurum_logo": "https://example.com/logo2.png",
+      "kurum_aciklama": "Başka bir kurum açıklaması",
+      "detsis": "67890"
     }
   ],
-  "message": null
+  "count": 2,
+  "message": "İşlem başarılı"
 }
 ```
 
@@ -75,7 +106,8 @@ GET /api/v1/institutions
 ```json
 {
   "success": false,
-  "data": null,
+  "data": [],
+  "count": null,
   "message": "Kurumlar listesi alınamadı"
 }
 ```
@@ -277,6 +309,147 @@ GET /api/v1/links?kurum_id={id}
   "data": [],
   "count": null,
   "message": "Linkler alınamadı"
+}
+```
+
+---
+
+## 6. Son Yüklenen Mevzuatlar
+
+### Endpoint
+```
+GET /api/v1/regulations/recent
+```
+
+### Request
+```
+GET /api/v1/regulations/recent?limit=50
+```
+
+**Query Parameters:**
+- `limit` (opsiyonel, varsayılan: 50): Maksimum kayıt sayısı (maksimum 1000)
+
+**Not:** Kayıtlar her zaman `olusturulma_tarihi` alanına göre azalan (desc) sırada döner (en yeni önce).
+
+**Headers:** Yok
+
+**Body:** Yok
+
+### Response
+
+**Success (200 OK)**
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "pdf_adi": "2016-21 - Kısa Vadeli Sigorta Kolları Uygulamaları",
+      "kurum_adi": "Sosyal Güvenlik Kurumu",
+      "aciklama": "T C Sosyal Güvenli k Kurumu Emeklilik Hizmetleri Genel Müdürlüğü 2016 21 SAYILI GENELGE...",
+      "olusturulma_tarihi": "2025-09-06 12:50:09",
+      "belge_turu": "Genelge",
+      "url_slug": "2016-21-kisa-vadeli-sigorta-kollari-uygulamalari"
+    }
+  ],
+  "count": 50,
+  "message": "İşlem başarılı",
+  "error": null
+}
+```
+
+**Error (500 Internal Server Error)**
+```json
+{
+  "success": false,
+  "data": [],
+  "count": 0,
+  "message": null,
+  "error": "Mevzuatlar alınamadı"
+}
+```
+
+---
+
+## 7. İstatistikler
+
+### Endpoint
+```
+GET /api/v1/statistics
+```
+
+### Request
+```
+GET /api/v1/statistics
+```
+
+**Query Parameters:** Yok
+
+**Headers:** Yok
+
+**Body:** Yok
+
+### Response
+
+**Success (200 OK)**
+```json
+{
+  "success": true,
+  "data": {
+    "total_kurumlar": 150,
+    "total_belgeler": 12500,
+    "belge_turu_istatistik": [
+      {
+        "belge_turu": "Kanun",
+        "count": 3500
+      },
+      {
+        "belge_turu": "Yönetmelik",
+        "count": 2800
+      },
+      {
+        "belge_turu": "Tebliğ",
+        "count": 2100
+      },
+      {
+        "belge_turu": "Genelge",
+        "count": 1800
+      },
+      {
+        "belge_turu": "Karar",
+        "count": 1200
+      },
+      {
+        "belge_turu": "Yönerge",
+        "count": 800
+      },
+      {
+        "belge_turu": "Belirtilmemiş",
+        "count": 300
+      }
+    ]
+  },
+  "message": "Statistics fetched successfully",
+  "error": null
+}
+```
+
+**Error - Belgeler Sayılamadı (500 Internal Server Error)**
+```json
+{
+  "success": false,
+  "data": null,
+  "message": null,
+  "error": "Failed to count documents"
+}
+```
+
+**Error - Belge Türü İstatistikleri Alınamadı (500 Internal Server Error)**
+```json
+{
+  "success": false,
+  "data": null,
+  "message": null,
+  "error": "Failed to aggregate document types"
 }
 ```
 
