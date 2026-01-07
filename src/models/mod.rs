@@ -9,6 +9,7 @@ pub mod announcement;
 pub mod link;
 pub mod regulation;
 pub mod statistics;
+pub mod kurum_duyuru_scraped;
 
 #[allow(dead_code)]
 #[derive(Debug, Serialize, Deserialize)]

@@ -8,6 +8,7 @@ pub mod announcement;
 pub mod link;
 pub mod regulation;
 pub mod statistics;
+pub mod kurum_duyuru;
 
 // Yeni handler'lar eklendikçe buraya ekleyin
 

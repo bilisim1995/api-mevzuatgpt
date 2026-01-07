@@ -11,6 +11,7 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
             .service(web::scope("/v1/links").configure(handlers::link::routes))
             .service(web::scope("/v1/regulations").configure(handlers::regulation::routes))
             .service(web::scope("/v1/statistics").configure(handlers::statistics::routes))
+            .service(web::scope("/v1/kurum-duyuru").configure(handlers::kurum_duyuru::routes))
             // Yeni route'lar buraya eklenecek
     );
 }

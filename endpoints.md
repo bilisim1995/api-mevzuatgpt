@@ -499,3 +499,203 @@ GET /api/v1/statistics
 
 ---
 
+## 8. Kurum Duyuruları (Web Scraping)
+
+### Endpoint
+```
+GET /api/v1/kurum-duyuru
+```
+
+### Request
+```
+GET /api/v1/kurum-duyuru?kurum_id=507f1f77bcf86cd799439020
+```
+
+**Query Parameters:**
+- `kurum_id` (zorunlu): Kurum ID'si (string formatında)
+
+**Headers:** Yok
+
+**Body:** Yok
+
+### Endpoint Açıklaması
+
+Belirtilen kurumun web sitesinden duyuruları çeker. Kurumun `kurum_duyuru` koleksiyonundaki `duyuru_linki` kullanılarak web scraping yapılır.
+
+**Desteklenen Kurumlar:**
+- Yargıtay (`yargitay.gov.tr`)
+- SGK (`sgk.gov.tr`)
+- İşkur (`iskur.gov.tr`)
+- Diğer: Varsayılan olarak Yargıtay scraper'ı kullanılır
+
+### Response
+
+**Success (200 OK)**
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "baslik": "2024 Yılı Yargıtay Genel Kurul Kararları",
+      "link": "https://www.yargitay.gov.tr/item/12345/duyuru-detay",
+      "tarih": "15.01.2024"
+    },
+    {
+      "baslik": "Yargıtay Daire Başkanları Toplantısı Duyurusu",
+      "link": "https://www.yargitay.gov.tr/item/12346/duyuru-detay",
+      "tarih": "14.01.2024"
+    },
+    {
+      "baslik": "Yeni İçtihat Kararları Yayınlandı",
+      "link": "https://www.yargitay.gov.tr/item/12347/duyuru-detay",
+      "tarih": "13.01.2024"
+    },
+    {
+      "baslik": "Yargıtay Personel Alım İlanı",
+      "link": "https://www.yargitay.gov.tr/item/12348/duyuru-detay",
+      "tarih": "12.01.2024"
+    },
+    {
+      "baslik": "Yargıtay Yıllık Faaliyet Raporu",
+      "link": "https://www.yargitay.gov.tr/item/12349/duyuru-detay",
+      "tarih": "10.01.2024"
+    }
+  ],
+  "count": 5,
+  "message": "Kurum duyuruları başarıyla çekildi",
+  "error": null
+}
+```
+
+**SGK Örneği**
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "baslik": "SGK Prim Ödemeleri Hakkında Duyuru",
+      "link": "https://www.sgk.gov.tr/Duyuru/Detay/12345",
+      "tarih": "23.09.2025"
+    },
+    {
+      "baslik": "Emeklilik Başvuru Süreçleri Güncellendi",
+      "link": "https://www.sgk.gov.tr/Duyuru/Detay/12346",
+      "tarih": "20.09.2025"
+    }
+  ],
+  "count": 2,
+  "message": "Kurum duyuruları başarıyla çekildi",
+  "error": null
+}
+```
+
+**İşkur Örneği**
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "baslik": "Yeni İş İmkanları Duyurusu",
+      "link": "https://www.iskur.gov.tr/duyurular/12345",
+      "tarih": "11.08.2025"
+    },
+    {
+      "baslik": "Mesleki Eğitim Programları",
+      "link": "https://www.iskur.gov.tr/duyurular/12346",
+      "tarih": "27.07.2025"
+    }
+  ],
+  "count": 2,
+  "message": "Kurum duyuruları başarıyla çekildi",
+  "error": null
+}
+```
+
+**Boş Liste (200 OK)**
+```json
+{
+  "success": true,
+  "data": [],
+  "count": 0,
+  "message": "Kurum duyuruları başarıyla çekildi",
+  "error": null
+}
+```
+
+**Error - kurum_id Parametresi Eksik (400 Bad Request)**
+```json
+{
+  "success": false,
+  "data": [],
+  "count": 0,
+  "message": null,
+  "error": "kurum_id parameter is required"
+}
+```
+
+**Error - Kurum Duyuru Linki Bulunamadı (404 Not Found)**
+```json
+{
+  "success": false,
+  "data": [],
+  "count": 0,
+  "message": null,
+  "error": "Kurum duyuru linki bulunamadı"
+}
+```
+
+**Error - Duyuru Linki Tanımlanmamış (404 Not Found)**
+```json
+{
+  "success": false,
+  "data": [],
+  "count": 0,
+  "message": null,
+  "error": "Kurum için duyuru linki tanımlanmamış"
+}
+```
+
+**Error - Web Scraping Hatası (500 Internal Server Error)**
+```json
+{
+  "success": false,
+  "data": [],
+  "count": 0,
+  "message": null,
+  "error": "Duyuru sayfası çekilemedi"
+}
+```
+
+### Özellikler
+
+1. **Zorunlu parametre**: `kurum_id` parametresi zorunludur
+2. **Web scraping**: Kurumun web sitesinden gerçek zamanlı duyurular çekilir
+3. **Limit**: En fazla 5 duyuru döndürülür
+4. **Otomatik domain algılama**: URL'deki domain'e göre uygun scraper seçilir
+5. **HTML temizleme**: Başlıklar HTML tag'lerinden ve entity'lerden temizlenir
+6. **Tarih çıkarımı**: HTML içinden tarih bilgisi otomatik çıkarılır
+7. **Link normalizasyonu**: Relative linkler mutlak URL'ye dönüştürülür
+8. **Navigasyon filtresi**: Menü linkleri otomatik filtrelenir
+9. **Tekrar önleme**: Aynı link birden fazla kez döndürülmez
+
+### Tarih Formatları
+
+Endpoint farklı tarih formatlarını destekler:
+
+- **Yargıtay**: `DD.MM.YYYY` veya `DD/MM/YYYY`
+- **SGK**: `DD Ay YYYY` (örn: "23 Eylül 2025") → `DD.MM.YYYY` formatına dönüştürülür
+- **İşkur**: `DD Ay Kısaltma YYYY` (örn: "11 Ağu 2025") → `DD.MM.YYYY` formatına dönüştürülür
+- **Varsayılan**: Tarih bulunamazsa bugünün tarihi kullanılır
+
+### Notlar
+
+- `kurum_id` string formatında olmalıdır
+- Duyurular her istekte web sitesinden çekilir (cache yok)
+- Timeout: 30 saniye
+- HTTP client timeout: 15 saniye
+- Başlıklar minimum 10-15 karakter olmalıdır
+- Navigasyon linkleri (ana sayfa, menü vb.) otomatik filtrelenir
+- Türkçe karakterler doğru şekilde decode edilir
+
+---
+
