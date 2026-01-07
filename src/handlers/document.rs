@@ -9,6 +9,7 @@ use crate::models::document_filters::{DocumentFiltersResponse, DocumentFiltersDa
 use std::collections::HashSet;
 use regex;
 use chrono::Utc;
+use futures::{future, FutureExt};
 
 #[derive(serde::Deserialize)]
 pub struct DocumentQuery {
@@ -28,7 +29,7 @@ pub async fn get_documents(
     let metadata_collection: Collection<MongoDocument> = state.db.collection("metadata");
 
     // Query parametrelerini al
-    let limit = query.limit.unwrap_or(10000);
+    let limit = query.limit.unwrap_or(10000).min(10000); // Maksimum 10000
     let offset = query.offset.unwrap_or(0);
     let sort_by = query.sort_by.as_deref().unwrap_or("olusturulma_tarihi");
     let sort_order = query.sort_order.as_deref().unwrap_or("desc");
@@ -475,189 +476,145 @@ pub async fn get_document_by_slug(
         .unwrap_or("")
         .to_string();
 
-    // Kurum bilgilerini al
-    let (kurum_adi, kurum_logo, kurum_aciklama) = if let Ok(kurum_oid) = ObjectId::parse_str(&kurum_id) {
-        match kurum_collection.find_one(doc! { "_id": kurum_oid }, None).await {
-            Ok(Some(kurum_doc)) => {
-                let kurum_adi = kurum_doc
-                    .get_str("kurum_adi")
-                    .or_else(|_| kurum_doc.get_str("kurumAdi"))
-                    .unwrap_or("")
-                    .to_string();
-                let kurum_logo = kurum_doc
-                    .get_str("kurum_logo")
-                    .or_else(|_| kurum_doc.get_str("kurumLogo"))
-                    .unwrap_or("")
-                    .to_string();
-                let kurum_aciklama = kurum_doc
-                    .get_str("aciklama")
-                    .or_else(|_| kurum_doc.get_str("kurumAciklama"))
-                    .unwrap_or("")
-                    .to_string();
-                (kurum_adi, kurum_logo, kurum_aciklama)
-            }
-            _ => (String::new(), String::new(), String::new()),
-        }
-    } else {
-        (String::new(), String::new(), String::new())
-    };
-
-    // Content'i metadata_id ile bul
-    // metadata_id hem ObjectId hem de string olarak saklanmış olabilir
-    let metadata_oid = metadata_doc
-        .get_object_id("_id")
-        .ok();
+    // Kurum ve Content sorgularını paralel çalıştır (performans iyileştirmesi)
+    let kurum_oid_result = ObjectId::parse_str(&kurum_id);
+    let metadata_oid = metadata_doc.get_object_id("_id").ok();
     
-    let (content_id, icerik, content_olusturulma_tarihi) = if let Some(oid) = metadata_oid {
+    // Paralel sorguları hazırla
+    let kurum_future = if let Ok(kurum_oid) = kurum_oid_result {
+        kurum_collection.find_one(doc! { "_id": kurum_oid }, None).boxed()
+    } else {
+        future::ready(Ok(None::<MongoDocument>)).boxed()
+    };
+    
+    let content_future = if let Some(oid) = metadata_oid {
         // Önce ObjectId ile dene
-        match content_collection
-            .find_one(doc! { "metadata_id": oid }, None)
-            .await
-        {
-            Ok(Some(content_doc)) => {
-                let content_id = content_doc
-                    .get_object_id("_id")
-                    .map(|oid| oid.to_hex())
-                    .unwrap_or_default();
-                
-                // icerik alanını farklı isimlerle deneyelim
-                let icerik = content_doc
-                    .get_str("icerik")
-                    .or_else(|_| content_doc.get_str("content"))
-                    .or_else(|_| content_doc.get_str("text"))
-                    .unwrap_or("")
-                    .to_string();
-                
-                // olusturulma_tarihi'ni ISO formatına çevir
-                let olusturulma_tarihi = match content_doc
-                    .get_str("olusturulma_tarihi")
-                    .or_else(|_| content_doc.get_str("created_at"))
-                {
-                    Ok(s) => {
-                        if s.contains('T') || s.contains('Z') {
-                            s.to_string()
-                        } else {
-                            format!("{}T00:00:00Z", s)
-                        }
-                    }
-                    Err(_) => {
-                        match metadata_doc.get_str("olusturulma_tarihi") {
-                            Ok(s) => {
-                                if s.contains('T') || s.contains('Z') {
-                                    s.to_string()
-                                } else {
-                                    format!("{}T00:00:00Z", s)
-                                }
-                            }
-                            Err(_) => String::from(Utc::now().to_rfc3339()),
-                        }
-                    }
-                };
-                
-                (content_id, icerik, olusturulma_tarihi)
-            }
-            _ => {
-                // ObjectId ile bulunamadıysa string ile dene
-                match content_collection
-                    .find_one(doc! { "metadata_id": &metadata_id }, None)
-                    .await
-                {
-                    Ok(Some(content_doc)) => {
-                        let content_id = content_doc
-                            .get_object_id("_id")
-                            .map(|oid| oid.to_hex())
-                            .unwrap_or_default();
-                        
-                        let icerik = content_doc
-                            .get_str("icerik")
-                            .or_else(|_| content_doc.get_str("content"))
-                            .or_else(|_| content_doc.get_str("text"))
-                            .unwrap_or("")
-                            .to_string();
-                        
-                        // olusturulma_tarihi'ni ISO formatına çevir
-                        let olusturulma_tarihi = content_doc
-                            .get_str("olusturulma_tarihi")
-                            .or_else(|_| content_doc.get_str("created_at"))
-                            .map(|s| {
-                                if s.contains('T') || s.contains('Z') {
-                                    s.to_string()
-                                } else {
-                                    format!("{}T00:00:00Z", s)
-                                }
-                            })
-                            .unwrap_or_else(|_| {
-                                match metadata_doc.get_str("olusturulma_tarihi") {
-                                    Ok(s) => {
-                                        if s.contains('T') || s.contains('Z') {
-                                            s.to_string()
-                                        } else {
-                                            format!("{}T00:00:00Z", s)
-                                        }
-                                    }
-                                    Err(_) => String::from(Utc::now().to_rfc3339()),
-                                }
-                            });
-                        
-                        (content_id, icerik, olusturulma_tarihi)
-                    }
-                    _ => {
-                        log::warn!("Content bulunamadı - metadata_id: {}", metadata_id);
-                        (String::new(), String::new(), String::new())
+        content_collection.find_one(doc! { "metadata_id": oid }, None).boxed()
+    } else {
+        // String ile dene
+        content_collection.find_one(doc! { "metadata_id": &metadata_id }, None).boxed()
+    };
+    
+    // Paralel çalıştır
+    let (kurum_result, content_result) = future::join(kurum_future, content_future).await;
+    
+    // Kurum bilgilerini işle
+    let (kurum_adi, kurum_logo, kurum_aciklama) = match kurum_result {
+        Ok(Some(kurum_doc)) => {
+            let kurum_adi = kurum_doc
+                .get_str("kurum_adi")
+                .or_else(|_| kurum_doc.get_str("kurumAdi"))
+                .unwrap_or("")
+                .to_string();
+            let kurum_logo = kurum_doc
+                .get_str("kurum_logo")
+                .or_else(|_| kurum_doc.get_str("kurumLogo"))
+                .unwrap_or("")
+                .to_string();
+            let kurum_aciklama = kurum_doc
+                .get_str("aciklama")
+                .or_else(|_| kurum_doc.get_str("kurumAciklama"))
+                .unwrap_or("")
+                .to_string();
+            (kurum_adi, kurum_logo, kurum_aciklama)
+        }
+        _ => (String::new(), String::new(), String::new()),
+    };
+    
+    // Content'i işle
+    let (content_id, icerik, content_olusturulma_tarihi) = match content_result {
+        Ok(Some(content_doc)) => {
+            let content_id = content_doc
+                .get_object_id("_id")
+                .map(|oid| oid.to_hex())
+                .unwrap_or_default();
+            
+            // icerik alanını farklı isimlerle deneyelim
+            let icerik = content_doc
+                .get_str("icerik")
+                .or_else(|_| content_doc.get_str("content"))
+                .or_else(|_| content_doc.get_str("text"))
+                .unwrap_or("")
+                .to_string();
+            
+            // olusturulma_tarihi'ni ISO formatına çevir
+            let olusturulma_tarihi = match content_doc
+                .get_str("olusturulma_tarihi")
+                .or_else(|_| content_doc.get_str("created_at"))
+            {
+                Ok(s) => {
+                    if s.contains('T') || s.contains('Z') {
+                        s.to_string()
+                    } else {
+                        format!("{}T00:00:00Z", s)
                     }
                 }
-            }
-        }
-    } else {
-        // metadata_id ObjectId değilse string ile dene
-        match content_collection
-            .find_one(doc! { "metadata_id": &metadata_id }, None)
-            .await
-        {
-            Ok(Some(content_doc)) => {
-                let content_id = content_doc
-                    .get_object_id("_id")
-                    .map(|oid| oid.to_hex())
-                    .unwrap_or_default();
-                
-                let icerik = content_doc
-                    .get_str("icerik")
-                    .or_else(|_| content_doc.get_str("content"))
-                    .or_else(|_| content_doc.get_str("text"))
-                    .unwrap_or("")
-                    .to_string();
-                
-                // olusturulma_tarihi'ni ISO formatına çevir
-                let olusturulma_tarihi = match content_doc
-                    .get_str("olusturulma_tarihi")
-                    .or_else(|_| content_doc.get_str("created_at"))
-                {
-                    Ok(s) => {
-                        if s.contains('T') || s.contains('Z') {
-                            s.to_string()
-                        } else {
-                            format!("{}T00:00:00Z", s)
-                        }
-                    }
-                    Err(_) => {
-                        match metadata_doc.get_str("olusturulma_tarihi") {
-                            Ok(s) => {
-                                if s.contains('T') || s.contains('Z') {
-                                    s.to_string()
-                                } else {
-                                    format!("{}T00:00:00Z", s)
-                                }
+                Err(_) => {
+                    match metadata_doc.get_str("olusturulma_tarihi") {
+                        Ok(s) => {
+                            if s.contains('T') || s.contains('Z') {
+                                s.to_string()
+                            } else {
+                                format!("{}T00:00:00Z", s)
                             }
-                            Err(_) => String::from(Utc::now().to_rfc3339()),
                         }
+                        Err(_) => String::from(Utc::now().to_rfc3339()),
                     }
-                };
-                
-                (content_id, icerik, olusturulma_tarihi)
-            }
-            _ => {
-                log::warn!("Content bulunamadı - metadata_id: {}", metadata_id);
-                (String::new(), String::new(), String::new())
+                }
+            };
+            
+            (content_id, icerik, olusturulma_tarihi)
+        }
+        _ => {
+            // Content bulunamadıysa string ile de dene (fallback)
+            match content_collection
+                .find_one(doc! { "metadata_id": &metadata_id }, None)
+                .await
+            {
+                Ok(Some(content_doc)) => {
+                    let content_id = content_doc
+                        .get_object_id("_id")
+                        .map(|oid| oid.to_hex())
+                        .unwrap_or_default();
+                    
+                    let icerik = content_doc
+                        .get_str("icerik")
+                        .or_else(|_| content_doc.get_str("content"))
+                        .or_else(|_| content_doc.get_str("text"))
+                        .unwrap_or("")
+                        .to_string();
+                    
+                    let olusturulma_tarihi = match content_doc
+                        .get_str("olusturulma_tarihi")
+                        .or_else(|_| content_doc.get_str("created_at"))
+                    {
+                        Ok(s) => {
+                            if s.contains('T') || s.contains('Z') {
+                                s.to_string()
+                            } else {
+                                format!("{}T00:00:00Z", s)
+                            }
+                        }
+                        Err(_) => {
+                            match metadata_doc.get_str("olusturulma_tarihi") {
+                                Ok(s) => {
+                                    if s.contains('T') || s.contains('Z') {
+                                        s.to_string()
+                                    } else {
+                                        format!("{}T00:00:00Z", s)
+                                    }
+                                }
+                                Err(_) => String::from(Utc::now().to_rfc3339()),
+                            }
+                        }
+                    };
+                    
+                    (content_id, icerik, olusturulma_tarihi)
+                }
+                _ => {
+                    log::warn!("Content bulunamadı - metadata_id: {}", metadata_id);
+                    (String::new(), String::new(), String::new())
+                }
             }
         }
     };

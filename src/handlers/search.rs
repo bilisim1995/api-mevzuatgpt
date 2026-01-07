@@ -3,7 +3,6 @@ use mongodb::{Collection, bson::{doc, Document as MongoDocument}};
 use crate::config::AppState;
 use crate::models::search::{SearchResponse, SearchResult};
 use regex::Regex;
-use std::collections::HashMap;
 
 #[derive(serde::Deserialize)]
 pub struct SearchQuery {
@@ -32,7 +31,6 @@ pub async fn search(
     let search_query = query.q.trim();
 
     let metadata_collection: Collection<MongoDocument> = state.db.collection("metadata");
-    let kurum_collection: Collection<MongoDocument> = state.db.collection("kurumlar");
 
     // Gelişmiş regex pattern oluştur (yakın eşleşmeler için)
     let regex_pattern = build_advanced_regex_pattern(search_query);
@@ -125,9 +123,34 @@ pub async fn search(
         }
     };
 
-    // Metadata sonuçlarını al
+    // Metadata sonuçlarını al - $lookup ile kurum bilgilerini birleştir (N+1 query problemini çöz)
     let pipeline = vec![
         doc! { "$match": match_filter.clone() },
+        doc! {
+            "$addFields": {
+                "kurum_id_object": {
+                    "$cond": {
+                        "if": { "$eq": [{ "$type": "$kurum_id" }, "string"] },
+                        "then": { "$toObjectId": "$kurum_id" },
+                        "else": "$kurum_id"
+                    }
+                }
+            }
+        },
+        doc! {
+            "$lookup": {
+                "from": "kurumlar",
+                "localField": "kurum_id_object",
+                "foreignField": "_id",
+                "as": "kurum_bilgisi"
+            }
+        },
+        doc! {
+            "$unwind": {
+                "path": "$kurum_bilgisi",
+                "preserveNullAndEmptyArrays": true
+            }
+        },
         doc! { "$sort": { "olusturulma_tarihi": -1 } },
         doc! { "$skip": offset as i64 },
         doc! { "$limit": limit as i64 },
@@ -147,114 +170,55 @@ pub async fn search(
     };
 
     let mut results: Vec<SearchResult> = Vec::new();
-    let mut url_slug_to_metadata: HashMap<String, MongoDocument> = HashMap::new();
-
-    // Metadata sonuçlarını topla
-    while let Ok(true) = cursor.advance().await {
-        if let Ok(doc_map) = cursor.deserialize_current() {
-            if let Ok(url_slug) = doc_map.get_str("url_slug") {
-                url_slug_to_metadata.insert(url_slug.to_string(), doc_map.clone());
-            }
-        }
-    }
 
     // Her metadata kaydı için detayları hesapla
-    for (url_slug, metadata_doc) in url_slug_to_metadata.iter() {
-        let id = metadata_doc
-            .get_object_id("_id")
-            .map(|oid| oid.to_hex())
-            .unwrap_or_default();
+    while let Ok(true) = cursor.advance().await {
+        if let Ok(metadata_doc) = cursor.deserialize_current() {
+            let id = metadata_doc
+                .get_object_id("_id")
+                .map(|oid| oid.to_hex())
+                .unwrap_or_default();
 
-        let pdf_adi = metadata_doc
-            .get_str("pdf_adi")
-            .unwrap_or("")
-            .to_string();
+            let pdf_adi = metadata_doc
+                .get_str("pdf_adi")
+                .unwrap_or("")
+                .to_string();
 
-        let kurum_id = metadata_doc
-            .get_str("kurum_id")
-            .unwrap_or("")
-            .to_string();
+            let url_slug = metadata_doc
+                .get_str("url_slug")
+                .unwrap_or("")
+                .to_string();
 
-        // Kurum adını bul
-        let kurum_adi = if let Ok(kurum_oid) = mongodb::bson::oid::ObjectId::parse_str(&kurum_id) {
-            if let Ok(Some(kurum_doc)) = kurum_collection.find_one(
-                doc! { "_id": kurum_oid },
-                None
-            ).await {
-                kurum_doc.get_str("kurum_adi").unwrap_or("").to_string()
-            } else {
-                "".to_string()
-            }
-        } else {
-            "".to_string()
-        };
+            // Kurum adını $lookup ile gelen kurum_bilgisi'nden al
+            let kurum_adi = metadata_doc
+                .get_document("kurum_bilgisi")
+                .ok()
+                .and_then(|k| {
+                    k.get_str("kurum_adi")
+                        .or_else(|_| k.get_str("kurumAdi"))
+                        .ok()
+                })
+                .unwrap_or("")
+                .to_string();
 
-        // Match type ve match count hesapla
-        // MongoDB pattern'lerini kullanarak her kelime için ayrı kontrol
-        let mongo_patterns = build_mongodb_regex_patterns(search_query);
-        let mut match_types: Vec<String> = Vec::new();
-        
-        // Ağırlıklı puanlama için ayrı ayrı sayılar
-        let mut title_count = 0u64;
-        let mut content_count = 0u64;
+            // Match type ve match count hesapla
+            // MongoDB pattern'lerini kullanarak her kelime için ayrı kontrol
+            let mongo_patterns = build_mongodb_regex_patterns(search_query);
+            let mut match_types: Vec<String> = Vec::new();
+            
+            // Ağırlıklı puanlama için ayrı ayrı sayılar
+            let mut title_count = 0u64;
+            let mut content_count = 0u64;
 
-        // Title match (pdf_adi) - tüm kelimeler geçmeli
-        let pdf_adi_lower = pdf_adi.to_lowercase();
-        let mut title_matches = true;
-        
-        if mongo_patterns.is_empty() {
-            // Tek kelime veya basit pattern
-            if regex_obj.is_match(&pdf_adi_lower) {
-                match_types.push("title".to_string());
-                title_count = regex_obj.find_iter(&pdf_adi_lower).count() as u64;
-            }
-        } else {
-            // Çoklu kelime: her kelime için ayrı kontrol
-            // MongoDB pattern formatı: ".*kelime.*" -> sadece "kelime" kısmını al
-            for pattern in &mongo_patterns {
-                // Pattern'den kelimeyi çıkar: ".*kısa.*" -> "kısa"
-                let word = pattern.trim_start_matches(".*").trim_end_matches(".*");
-                if pdf_adi_lower.contains(&word.to_lowercase()) {
-                    title_count += pdf_adi_lower.matches(&word.to_lowercase()).count() as u64;
-                } else {
-                    title_matches = false;
-                    break;
-                }
-            }
-            if title_matches && title_count > 0 {
-                match_types.push("title".to_string());
-            }
-        }
-
-        // Content match (aciklama) - tüm kelimeler geçmeli
-        let mut content_preview = String::new();
-        if let Ok(aciklama) = metadata_doc.get_str("aciklama") {
-            let aciklama_lower = aciklama.to_lowercase();
-            let mut content_matches = true;
+            // Title match (pdf_adi) - tüm kelimeler geçmeli
+            let pdf_adi_lower = pdf_adi.to_lowercase();
+            let mut title_matches = true;
             
             if mongo_patterns.is_empty() {
                 // Tek kelime veya basit pattern
-                if regex_obj.is_match(&aciklama_lower) {
-                    match_types.push("content".to_string());
-                    content_count = regex_obj.find_iter(&aciklama_lower).count() as u64;
-                    
-                    // Content preview oluştur
-                    if let Some(mat) = regex_obj.find(&aciklama_lower) {
-                        let start = mat.start().saturating_sub(100);
-                        let end = (mat.end() + 100).min(aciklama.len());
-                        content_preview = format!("...{}...", &aciklama[start..end]);
-                    } else {
-                        content_preview = aciklama.chars().take(200).collect::<String>();
-                        if aciklama.len() > 200 {
-                            content_preview.push_str("...");
-                        }
-                    }
-                } else {
-                    // Eşleşme yoksa da preview göster
-                    content_preview = aciklama.chars().take(200).collect::<String>();
-                    if aciklama.len() > 200 {
-                        content_preview.push_str("...");
-                    }
+                if regex_obj.is_match(&pdf_adi_lower) {
+                    match_types.push("title".to_string());
+                    title_count = regex_obj.find_iter(&pdf_adi_lower).count() as u64;
                 }
             } else {
                 // Çoklu kelime: her kelime için ayrı kontrol
@@ -262,107 +226,156 @@ pub async fn search(
                 for pattern in &mongo_patterns {
                     // Pattern'den kelimeyi çıkar: ".*kısa.*" -> "kısa"
                     let word = pattern.trim_start_matches(".*").trim_end_matches(".*");
-                    if aciklama_lower.contains(&word.to_lowercase()) {
-                        content_count += aciklama_lower.matches(&word.to_lowercase()).count() as u64;
+                    if pdf_adi_lower.contains(&word.to_lowercase()) {
+                        title_count += pdf_adi_lower.matches(&word.to_lowercase()).count() as u64;
                     } else {
-                        content_matches = false;
+                        title_matches = false;
                         break;
                     }
                 }
-                if content_matches && content_count > 0 {
-                    match_types.push("content".to_string());
-                    
-                    // Content preview oluştur (ilk kelimeyi bul)
-                    let first_word = mongo_patterns[0].trim_start_matches(".*").trim_end_matches(".*");
-                    if let Some(pos) = aciklama_lower.find(&first_word.to_lowercase()) {
-                        let start = pos.saturating_sub(100);
-                        let end = (pos + first_word.len() + 100).min(aciklama.len());
-                        content_preview = format!("...{}...", &aciklama[start..end]);
+                if title_matches && title_count > 0 {
+                    match_types.push("title".to_string());
+                }
+            }
+
+            // Content match (aciklama) - tüm kelimeler geçmeli
+            let mut content_preview = String::new();
+            if let Ok(aciklama) = metadata_doc.get_str("aciklama") {
+                let aciklama_lower = aciklama.to_lowercase();
+                let mut content_matches = true;
+                
+                if mongo_patterns.is_empty() {
+                    // Tek kelime veya basit pattern
+                    if regex_obj.is_match(&aciklama_lower) {
+                        match_types.push("content".to_string());
+                        content_count = regex_obj.find_iter(&aciklama_lower).count() as u64;
+                        
+                        // Content preview oluştur
+                        if let Some(mat) = regex_obj.find(&aciklama_lower) {
+                            let start = mat.start().saturating_sub(100);
+                            let end = (mat.end() + 100).min(aciklama.len());
+                            content_preview = format!("...{}...", &aciklama[start..end]);
+                        } else {
+                            content_preview = aciklama.chars().take(200).collect::<String>();
+                            if aciklama.len() > 200 {
+                                content_preview.push_str("...");
+                            }
+                        }
                     } else {
+                        // Eşleşme yoksa da preview göster
                         content_preview = aciklama.chars().take(200).collect::<String>();
                         if aciklama.len() > 200 {
                             content_preview.push_str("...");
                         }
                     }
                 } else {
-                    // Eşleşme yoksa da preview göster
-                    content_preview = aciklama.chars().take(200).collect::<String>();
-                    if aciklama.len() > 200 {
-                        content_preview.push_str("...");
+                    // Çoklu kelime: her kelime için ayrı kontrol
+                    // MongoDB pattern formatı: ".*kelime.*" -> sadece "kelime" kısmını al
+                    for pattern in &mongo_patterns {
+                        // Pattern'den kelimeyi çıkar: ".*kısa.*" -> "kısa"
+                        let word = pattern.trim_start_matches(".*").trim_end_matches(".*");
+                        if aciklama_lower.contains(&word.to_lowercase()) {
+                            content_count += aciklama_lower.matches(&word.to_lowercase()).count() as u64;
+                        } else {
+                            content_matches = false;
+                            break;
+                        }
+                    }
+                    if content_matches && content_count > 0 {
+                        match_types.push("content".to_string());
+                        
+                        // Content preview oluştur (ilk kelimeyi bul)
+                        let first_word = mongo_patterns[0].trim_start_matches(".*").trim_end_matches(".*");
+                        if let Some(pos) = aciklama_lower.find(&first_word.to_lowercase()) {
+                            let start = pos.saturating_sub(100);
+                            let end = (pos + first_word.len() + 100).min(aciklama.len());
+                            content_preview = format!("...{}...", &aciklama[start..end]);
+                        } else {
+                            content_preview = aciklama.chars().take(200).collect::<String>();
+                            if aciklama.len() > 200 {
+                                content_preview.push_str("...");
+                            }
+                        }
+                    } else {
+                        // Eşleşme yoksa da preview göster
+                        content_preview = aciklama.chars().take(200).collect::<String>();
+                        if aciklama.len() > 200 {
+                            content_preview.push_str("...");
+                        }
                     }
                 }
             }
+
+            // Ağırlıklı puanlama ile relevance percentage hesapla
+            // Title ağırlığı: 0.7, Content ağırlığı: 0.3
+            const TITLE_WEIGHT: f64 = 0.7;
+            const CONTENT_WEIGHT: f64 = 0.3;
+            
+            // Her alanın kendi base score'unu hesapla
+            let title_base_score = if title_count > 0 {
+                title_count as f64 / (title_count as f64 + 1.0)
+            } else {
+                0.0
+            };
+            
+            let content_base_score = if content_count > 0 {
+                content_count as f64 / (content_count as f64 + 1.0)
+            } else {
+                0.0
+            };
+            
+            // Ağırlıklı ortalama
+            let relevance_score = (title_base_score * TITLE_WEIGHT) + (content_base_score * CONTENT_WEIGHT);
+            let relevance_percentage = (relevance_score * 100.0) as u64;
+            
+            // Toplam match count (hem title hem content için)
+            let match_count = title_count + content_count;
+
+            let belge_yayin_tarihi = metadata_doc
+                .get_str("belge_yayin_tarihi")
+                .ok()
+                .map(|s| s.to_string());
+
+            let etiketler = metadata_doc
+                .get_str("etiketler")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
+
+            let aciklama = metadata_doc
+                .get_str("aciklama")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
+
+            let belge_turu = metadata_doc
+                .get_str("belge_turu")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
+
+            let belge_durumu = metadata_doc
+                .get_str("belge_durumu")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
+
+            results.push(SearchResult {
+                id,
+                pdf_adi,
+                kurum_adi,
+                match_type: match_types.join(","),
+                content_preview,
+                relevance_percentage,
+                match_count,
+                url_slug,
+                belge_yayin_tarihi,
+                etiketler,
+                aciklama,
+                belge_turu,
+                belge_durumu,
+            });
         }
-
-        // Ağırlıklı puanlama ile relevance percentage hesapla
-        // Title ağırlığı: 0.7, Content ağırlığı: 0.3
-        const TITLE_WEIGHT: f64 = 0.7;
-        const CONTENT_WEIGHT: f64 = 0.3;
-        
-        // Her alanın kendi base score'unu hesapla
-        let title_base_score = if title_count > 0 {
-            title_count as f64 / (title_count as f64 + 1.0)
-        } else {
-            0.0
-        };
-        
-        let content_base_score = if content_count > 0 {
-            content_count as f64 / (content_count as f64 + 1.0)
-        } else {
-            0.0
-        };
-        
-        // Ağırlıklı ortalama
-        let relevance_score = (title_base_score * TITLE_WEIGHT) + (content_base_score * CONTENT_WEIGHT);
-        let relevance_percentage = (relevance_score * 100.0) as u64;
-        
-        // Toplam match count (hem title hem content için)
-        let match_count = title_count + content_count;
-
-        let belge_yayin_tarihi = metadata_doc
-            .get_str("belge_yayin_tarihi")
-            .ok()
-            .map(|s| s.to_string());
-
-        let etiketler = metadata_doc
-            .get_str("etiketler")
-            .ok()
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
-
-        let aciklama = metadata_doc
-            .get_str("aciklama")
-            .ok()
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
-
-        let belge_turu = metadata_doc
-            .get_str("belge_turu")
-            .ok()
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
-
-        let belge_durumu = metadata_doc
-            .get_str("belge_durumu")
-            .ok()
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
-
-        results.push(SearchResult {
-            id,
-            pdf_adi,
-            kurum_adi,
-            match_type: match_types.join(","),
-            content_preview,
-            relevance_percentage,
-            match_count,
-            url_slug: url_slug.clone(),
-            belge_yayin_tarihi,
-            etiketler,
-            aciklama,
-            belge_turu,
-            belge_durumu,
-        });
     }
 
     // Relevance percentage'a göre sırala (yüksekten düşüğe)

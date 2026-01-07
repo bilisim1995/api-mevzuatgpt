@@ -15,15 +15,27 @@ async fn main() -> io::Result<()> {
     dotenv::dotenv().ok();
     env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
 
+    // CLI argümanlarını kontrol et
+    let args: Vec<String> = std::env::args().collect();
+    let create_indexes = args.iter().any(|arg| arg == "--create-indexes" || arg == "-i");
+
     // Config yükle
     let config = AppConfig::from_env().expect("Config yüklenemedi");
     
-    log::info!("Server başlatılıyor: {}:{}", config.host, config.port);
-
     // MongoDB bağlantısı
     let app_state = AppState::new(&config)
         .await
         .expect("MongoDB bağlantısı kurulamadı");
+
+    // Eğer --create-indexes parametresi verildiyse index'leri oluştur ve çık
+    if create_indexes {
+        log::info!("Index oluşturma modu aktif - MongoDB index'leri oluşturuluyor...");
+        AppState::ensure_indexes(&app_state.db).await;
+        log::info!("Index oluşturma işlemi tamamlandı. Uygulama kapatılıyor...");
+        return Ok(());
+    }
+
+    log::info!("Server başlatılıyor: {}:{}", config.host, config.port);
 
     let app_state = web::Data::new(app_state);
 

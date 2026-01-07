@@ -1,4 +1,5 @@
-use mongodb::{Client, Database, options::ClientOptions};
+use mongodb::{Client, Database, options::{ClientOptions, IndexOptions}, IndexModel};
+use mongodb::bson::doc;
 use std::env;
 use std::time::Duration;
 
@@ -56,6 +57,204 @@ impl AppState {
         log::info!("MongoDB bağlantısı başarıyla kuruldu: {}", config.mongodb_db_name);
 
         Ok(AppState { db })
+    }
+
+    // MongoDB index'lerini güvenli bir şekilde oluştur
+    // Mevcut verilere zarar vermez, sadece performans için index oluşturur
+    // Index zaten varsa hata vermez, sadece log yazar
+    // Bu fonksiyon manuel olarak çağrılmalıdır (--create-indexes parametresi ile)
+    pub async fn ensure_indexes(db: &Database) {
+        log::info!("MongoDB index'leri kontrol ediliyor...");
+
+        // metadata koleksiyonu index'leri
+        let metadata_collection = db.collection::<mongodb::bson::Document>("metadata");
+        
+        // url_slug unique index
+        if let Err(e) = metadata_collection.create_index(
+            IndexModel::builder()
+                .keys(doc! { "url_slug": 1 })
+                .options(IndexOptions::builder()
+                    .unique(true)
+                    .name("idx_url_slug_unique".to_string())
+                    .build())
+                .build(),
+            None,
+        ).await {
+            // Index zaten varsa veya başka bir hata varsa sadece log yaz
+            if e.to_string().contains("already exists") || e.to_string().contains("duplicate") {
+                log::info!("✓ url_slug unique index zaten mevcut");
+            } else {
+                log::warn!("url_slug index oluşturulamadı: {}", e);
+            }
+        } else {
+            log::info!("✓ url_slug unique index oluşturuldu");
+        }
+
+        // kurum_id index
+        if let Err(e) = metadata_collection.create_index(
+            IndexModel::builder()
+                .keys(doc! { "kurum_id": 1 })
+                .options(IndexOptions::builder()
+                    .name("idx_kurum_id".to_string())
+                    .build())
+                .build(),
+            None,
+        ).await {
+            if e.to_string().contains("already exists") || e.to_string().contains("duplicate") {
+                log::info!("✓ kurum_id index zaten mevcut");
+            } else {
+                log::warn!("kurum_id index oluşturulamadı: {}", e);
+            }
+        } else {
+            log::info!("✓ kurum_id index oluşturuldu");
+        }
+
+        // olusturulma_tarihi index
+        if let Err(e) = metadata_collection.create_index(
+            IndexModel::builder()
+                .keys(doc! { "olusturulma_tarihi": -1 })
+                .options(IndexOptions::builder()
+                    .name("idx_olusturulma_tarihi_desc".to_string())
+                    .build())
+                .build(),
+            None,
+        ).await {
+            if e.to_string().contains("already exists") || e.to_string().contains("duplicate") {
+                log::info!("✓ olusturulma_tarihi index zaten mevcut");
+            } else {
+                log::warn!("olusturulma_tarihi index oluşturulamadı: {}", e);
+            }
+        } else {
+            log::info!("✓ olusturulma_tarihi index oluşturuldu");
+        }
+
+        // belge_turu index
+        if let Err(e) = metadata_collection.create_index(
+            IndexModel::builder()
+                .keys(doc! { "belge_turu": 1 })
+                .options(IndexOptions::builder()
+                    .name("idx_belge_turu".to_string())
+                    .build())
+                .build(),
+            None,
+        ).await {
+            if e.to_string().contains("already exists") || e.to_string().contains("duplicate") {
+                log::info!("✓ belge_turu index zaten mevcut");
+            } else {
+                log::warn!("belge_turu index oluşturulamadı: {}", e);
+            }
+        } else {
+            log::info!("✓ belge_turu index oluşturuldu");
+        }
+
+        // Compound index: kurum_id + olusturulma_tarihi
+        if let Err(e) = metadata_collection.create_index(
+            IndexModel::builder()
+                .keys(doc! { "kurum_id": 1, "olusturulma_tarihi": -1 })
+                .options(IndexOptions::builder()
+                    .name("idx_kurum_tarih".to_string())
+                    .build())
+                .build(),
+            None,
+        ).await {
+            if e.to_string().contains("already exists") || e.to_string().contains("duplicate") {
+                log::info!("✓ kurum_tarih compound index zaten mevcut");
+            } else {
+                log::warn!("kurum_tarih compound index oluşturulamadı: {}", e);
+            }
+        } else {
+            log::info!("✓ kurum_tarih compound index oluşturuldu");
+        }
+
+        // content koleksiyonu index'leri
+        let content_collection = db.collection::<mongodb::bson::Document>("content");
+        
+        // metadata_id index
+        if let Err(e) = content_collection.create_index(
+            IndexModel::builder()
+                .keys(doc! { "metadata_id": 1 })
+                .options(IndexOptions::builder()
+                    .name("idx_content_metadata_id".to_string())
+                    .build())
+                .build(),
+            None,
+        ).await {
+            if e.to_string().contains("already exists") || e.to_string().contains("duplicate") {
+                log::info!("✓ content metadata_id index zaten mevcut");
+            } else {
+                log::warn!("content metadata_id index oluşturulamadı: {}", e);
+            }
+        } else {
+            log::info!("✓ content metadata_id index oluşturuldu");
+        }
+
+        // kurumlar koleksiyonu index'leri
+        let kurumlar_collection = db.collection::<mongodb::bson::Document>("kurumlar");
+        
+        // kurum_adi index (opsiyonel)
+        if let Err(e) = kurumlar_collection.create_index(
+            IndexModel::builder()
+                .keys(doc! { "kurum_adi": 1 })
+                .options(IndexOptions::builder()
+                    .name("idx_kurum_adi".to_string())
+                    .build())
+                .build(),
+            None,
+        ).await {
+            if e.to_string().contains("already exists") || e.to_string().contains("duplicate") {
+                log::info!("✓ kurum_adi index zaten mevcut");
+            } else {
+                log::warn!("kurum_adi index oluşturulamadı: {}", e);
+            }
+        } else {
+            log::info!("✓ kurum_adi index oluşturuldu");
+        }
+
+        // kurum_duyuru koleksiyonu index'leri
+        let kurum_duyuru_collection = db.collection::<mongodb::bson::Document>("kurum_duyuru");
+        
+        // kurum_id index
+        if let Err(e) = kurum_duyuru_collection.create_index(
+            IndexModel::builder()
+                .keys(doc! { "kurum_id": 1 })
+                .options(IndexOptions::builder()
+                    .name("idx_duyuru_kurum_id".to_string())
+                    .build())
+                .build(),
+            None,
+        ).await {
+            if e.to_string().contains("already exists") || e.to_string().contains("duplicate") {
+                log::info!("✓ kurum_duyuru kurum_id index zaten mevcut");
+            } else {
+                log::warn!("kurum_duyuru kurum_id index oluşturulamadı: {}", e);
+            }
+        } else {
+            log::info!("✓ kurum_duyuru kurum_id index oluşturuldu");
+        }
+
+        // links koleksiyonu index'leri
+        let links_collection = db.collection::<mongodb::bson::Document>("links");
+        
+        // kurum_id index
+        if let Err(e) = links_collection.create_index(
+            IndexModel::builder()
+                .keys(doc! { "kurum_id": 1 })
+                .options(IndexOptions::builder()
+                    .name("idx_links_kurum_id".to_string())
+                    .build())
+                .build(),
+            None,
+        ).await {
+            if e.to_string().contains("already exists") || e.to_string().contains("duplicate") {
+                log::info!("✓ links kurum_id index zaten mevcut");
+            } else {
+                log::warn!("links kurum_id index oluşturulamadı: {}", e);
+            }
+        } else {
+            log::info!("✓ links kurum_id index oluşturuldu");
+        }
+
+        log::info!("MongoDB index kontrolü tamamlandı");
     }
 }
 

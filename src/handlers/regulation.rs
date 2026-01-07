@@ -15,7 +15,7 @@ pub async fn get_recent_regulations(
     let metadata_collection: Collection<MongoDocument> = state.db.collection("metadata");
 
     // Query parametrelerini al
-    let limit = query.limit.unwrap_or(50).min(1000); // Maksimum 1000
+        let limit = query.limit.unwrap_or(50).min(1000); // Maksimum 1000 // Maksimum 1000
     // Her zaman olusturulma_tarihi'ne göre desc sıralama yap
     let sort_by = "olusturulma_tarihi";
     let sort_value = -1; // desc (en yeni önce)
