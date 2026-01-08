@@ -42,10 +42,13 @@ async fn main() -> io::Result<()> {
     // HTTP Server başlat
     HttpServer::new(move || {
         let cors = Cors::default()
-            .allow_any_origin()
-            .allow_any_method()
-            .allow_any_header()
-            .supports_credentials()
+            .allowed_origin("https://mevzuatgpt.org")
+            .allowed_origin("https://www.mevzuatgpt.org")
+            .allowed_methods(vec!["GET", "POST"])
+            .allowed_headers(vec![
+                actix_web::http::header::CONTENT_TYPE,
+                actix_web::http::header::ACCEPT,
+            ])
             .max_age(3600);
 
         App::new()
