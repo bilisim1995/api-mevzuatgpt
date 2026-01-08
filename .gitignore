@@ -12,9 +12,6 @@ Cargo.lock
 *.swo
 *~
 
-endpoints.md
-README.md
-
 # OS
 .DS_Store
 Thumbs.db

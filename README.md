@@ -59,3 +59,41 @@ src/
 2. Handler'ı `src/handlers/mod.rs` içinde export edin
 3. Route'u `src/routes/mod.rs` içinde tanımlayın
 
+## Production Deployment
+
+### Ubuntu VPS Kurulumu
+
+Detaylı kurulum rehberi için `UBUNTU_VPS_KURULUM.md` dosyasına bakın.
+
+### Otomatik Deployment
+
+Proje `deploy.sh` scripti ile birlikte gelir. Bu script:
+
+- Uygulamayı release modunda derler
+- Systemd servisini yeniden başlatır
+- Health check yapar
+- Deployment durumunu raporlar
+
+```bash
+# VPS'te deployment yapmak için:
+cd /opt/api-mevzuatgpt
+sudo ./deploy.sh
+```
+
+### Manuel Build (Production)
+
+```bash
+# Release modunda derle
+cargo build --release
+
+# Binary'i çalıştır
+./target/release/api-mevzuatgpt
+```
+
+## Dokümantasyon
+
+- `endpoints.md` - Tüm API endpoint'lerinin detaylı dokümantasyonu
+- `UBUNTU_VPS_KURULUM.md` - Ubuntu VPS kurulum rehberi
+- `mongodb_indexes.js` - MongoDB index oluşturma scriptleri
+- `deploy.sh` - Otomatik deployment scripti
+

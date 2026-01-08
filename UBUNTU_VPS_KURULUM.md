@@ -513,55 +513,123 @@ journalctl -u api-mevzuatgpt --since "1 hour ago" | grep -i "memory\|cpu"
 
 ## 9. Kod Güncellemeleri ve Deployment
 
-### 9.1. Güncelleme İşlemi
+### 9.1. Otomatik Deployment Script (Önerilen)
+
+Projede hazır `deploy.sh` scripti bulunmaktadır. Bu script:
+
+- ✅ Uygulamayı release modunda derler
+- ✅ Systemd servisini yeniden başlatır
+- ✅ Health check yapar
+- ✅ Deployment durumunu raporlar
+
+#### Deploy Scriptini Kullanma
 
 ```bash
 cd /opt/api-mevzuatgpt
 
-# Kodu çekin (git kullanıyorsanız)
-sudo -u www-data git pull
+# Scripti çalıştırılabilir yapın (ilk seferde)
+chmod +x deploy.sh
 
-# Yeniden derleyin
-sudo -u www-data cargo build --release
-
-# Servisi yeniden başlatın
-sudo systemctl restart api-mevzuatgpt
-
-# Durumu kontrol edin
-sudo systemctl status api-mevzuatgpt
+# Deployment'ı başlatın
+sudo ./deploy.sh
 ```
 
-### 9.2. Rollback (Geri Alma)
+Script çalıştığında:
+1. Proje dizinini ve .env dosyasını kontrol eder
+2. Uygulamayı derler
+3. Servisi yeniden başlatır
+4. Health check yapar
+5. Sonuçları raporlar
+
+#### Deploy Script Çıktısı
+
+```
+============================================
+   API MevzuatGPT Deployment Script
+============================================
+
+[INFO] Proje dizinine geçildi: /opt/api-mevzuatgpt
+[INFO] .env dosyası mevcut
+[INFO] Uygulama derleniyor (release mode)...
+[SUCCESS] Derleme başarılı!
+[INFO] Binary boyutu: 15M
+[SUCCESS] Servis başarıyla yeniden başlatıldı
+[SUCCESS] Servis aktif durumda
+[SUCCESS] Health check başarılı! (HTTP 200)
+
+============================================
+   DEPLOYMENT BAŞARILI! ✓
+============================================
+```
+
+### 9.2. Manuel Deployment İşlemi
+
+Eğer script kullanmak istemezseniz, manuel olarak:
 
 ```bash
 cd /opt/api-mevzuatgpt
 
-# Önceki commit'e dönün
-sudo -u www-data git log --oneline  # Commit hash'i bulun
-sudo -u www-data git checkout COMMIT_HASH
-
-# Yeniden derleyin
-sudo -u www-data cargo build --release
-
-# Servisi yeniden başlatın
-sudo systemctl restart api-mevzuatgpt
-```
-
-### 9.3. Zero-Downtime Deployment (İleri Seviye)
-
-```bash
-# Yeni binary'yi farklı bir isimle derleyin
+# Yeniden derle
 cargo build --release
-mv target/release/api-mevzuatgpt target/release/api-mevzuatgpt-new
 
-# Eski binary'yi yedekleyin
-cp target/release/api-mevzuatgpt-old target/release/api-mevzuatgpt-backup
+# Servisi yeniden başlat
+sudo systemctl restart api-mevzuatgpt
 
-# Yeni binary'yi aktif edin
-mv target/release/api-mevzuatgpt-new target/release/api-mevzuatgpt
+# Durumu kontrol et
+sudo systemctl status api-mevzuatgpt
 
-# Graceful restart
-sudo systemctl reload-or-restart api-mevzuatgpt
+# Health check
+curl http://localhost:8080/api/health
+```
+
+### 9.3. Rollback (Geri Alma)
+
+#### Git ile Rollback
+
+Eğer git kullanıyorsanız, önceki bir commit'e dönebilirsiniz:
+
+```bash
+cd /opt/api-mevzuatgpt
+
+# Commit geçmişini görüntüle
+git log --oneline -10
+
+# Önceki commit'e dön
+git checkout COMMIT_HASH
+
+# Yeniden derle ve deploy et
+sudo ./deploy.sh
+
+# VEYA manuel:
+cargo build --release
+sudo systemctl restart api-mevzuatgpt
+```
+
+#### Manuel Yedekleme Önerisi
+
+Önemli production deployment'lardan önce manuel yedek almanız önerilir:
+
+```bash
+# Production binary'yi yedekle
+cp target/release/api-mevzuatgpt ~/api-mevzuatgpt.backup
+
+# Deployment sonrası sorun olursa geri yükle
+cp ~/api-mevzuatgpt.backup target/release/api-mevzuatgpt
+sudo systemctl restart api-mevzuatgpt
+```
+
+### 9.4. Git ile Güncelleme (Opsiyonel)
+
+Eğer kodu git'ten çekmek isterseniz:
+
+```bash
+cd /opt/api-mevzuatgpt
+
+# Değişiklikleri çek
+git pull origin main
+
+# Deploy scriptini çalıştır
+sudo ./deploy.sh
 ```
 
 ---
@@ -672,27 +740,39 @@ MONGODB_URI=mongodb://localhost:27017/?maxPoolSize=20&minPoolSize=5
 
 ---
 
-## 12. Yedekleme Stratejisi
+## 12. Yedekleme Önerileri (Opsiyonel)
 
-### 12.1. Uygulama Binary Yedeği
+**Not:** Deploy scripti otomatik yedekleme yapmaz. Manuel yedekleme stratejisi oluşturmanız önerilir.
+
+### 12.1. .env Dosyası Yedeği
 
 ```bash
-# Cron ile günlük yedek
+# Güvenli bir yere yedekleyin
+sudo mkdir -p /root/backups
+sudo cp /opt/api-mevzuatgpt/.env /root/backups/.env.backup
+sudo chmod 600 /root/backups/.env.backup
+```
+
+### 12.2. Otomatik Binary Yedeği (Opsiyonel)
+
+Eğer otomatik yedekleme isterseniz, cron job oluşturabilirsiniz:
+
+```bash
+# Yedek dizini oluştur
+sudo mkdir -p /opt/backups
+
+# Cron job ekle
 crontab -e
 ```
 
 Ekleyin:
 
 ```
+# Her gün saat 02:00'de binary'yi yedekle
 0 2 * * * cp /opt/api-mevzuatgpt/target/release/api-mevzuatgpt /opt/backups/api-mevzuatgpt-$(date +\%Y\%m\%d)
-```
 
-### 12.2. .env Dosyası Yedeği
-
-```bash
-# Güvenli bir yere yedekleyin
-sudo cp /opt/api-mevzuatgpt/.env /root/backups/.env.backup
-sudo chmod 600 /root/backups/.env.backup
+# 30 günden eski yedekleri sil
+0 3 * * * find /opt/backups -name "api-mevzuatgpt-*" -mtime +30 -delete
 ```
 
 ---
