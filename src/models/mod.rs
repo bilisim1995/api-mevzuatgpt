@@ -12,6 +12,7 @@ pub mod regulation;
 pub mod statistics;
 pub mod kurum_duyuru_scraped;
 pub mod search;
+pub mod sitemap;
 
 #[allow(dead_code)]
 #[derive(Debug, Serialize, Deserialize)]
