@@ -96,4 +96,5 @@ cargo build --release
 - `UBUNTU_VPS_KURULUM.md` - Ubuntu VPS kurulum rehberi
 - `mongodb_indexes.js` - MongoDB index oluşturma scriptleri
 - `deploy.sh` - Otomatik deployment scripti
+- `check-api.sh` - API health check ve servis durumu kontrolü
 

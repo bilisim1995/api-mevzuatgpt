@@ -452,45 +452,72 @@ sudo nano /etc/logrotate.d/api-mevzuatgpt
 }
 ```
 
-### 8.3. Basit İzleme Scripti
+### 8.3. API Health Check Scripti
+
+Projede hazır `check-api.sh` scripti bulunmaktadır. Bu script:
+
+- ✅ Systemd servisinin durumunu kontrol eder
+- ✅ Health check endpoint'ini test eder
+- ✅ Hata varsa ekrana detaylı bilgi yazdırır
+- ❌ Log dosyasına yazmaz
+- ❌ Otomatik restart yapmaz
+
+#### Kullanımı:
 
 ```bash
-nano ~/check-api.sh
+cd /opt/api-mevzuatgpt
+
+# Scripti çalıştırılabilir yapın (ilk seferde)
+chmod +x check-api.sh
+
+# Scripti çalıştırın
+./check-api.sh
 ```
 
-İçeriği:
+#### Başarılı Çıktı:
 
-```bash
-#!/bin/bash
+```
+============================================
+   API Health Check - 2026-01-08 14:30:45
+============================================
 
-# API'nin çalışıp çalışmadığını kontrol et
-HEALTH_CHECK=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/api/health)
+Servis durumu kontrol ediliyor... ✓ Çalışıyor
+Health check endpoint kontrol ediliyor... ✓ OK (HTTP 200)
 
-if [ "$HEALTH_CHECK" != "200" ]; then
-    echo "[$(date)] API yanıt vermiyor! HTTP Status: $HEALTH_CHECK" >> /var/log/api-mevzuatgpt/monitor.log
-    # Servisi yeniden başlat
-    sudo systemctl restart api-mevzuatgpt
-else
-    echo "[$(date)] API çalışıyor - OK" >> /var/log/api-mevzuatgpt/monitor.log
-fi
+[BAŞARILI] API sağlıklı çalışıyor! ✓
+============================================
 ```
 
-Çalıştırılabilir yapın:
+#### Hata Durumunda:
 
-```bash
-chmod +x ~/check-api.sh
+```
+============================================
+   API Health Check - 2026-01-08 14:30:45
+============================================
+
+Servis durumu kontrol ediliyor... ✗ ÇALIŞMIYOR!
+
+[HATA] Systemd servisi aktif değil!
+Detay için: systemctl status api-mevzuatgpt
 ```
 
-Cron ile her 5 dakikada bir çalıştırın:
+#### Cron ile Otomatik Kontrol (Opsiyonel):
+
+Düzenli aralıklarla API'yi kontrol etmek isterseniz:
 
 ```bash
+# VPS'e scripti kopyalayın
+cp /opt/api-mevzuatgpt/check-api.sh /usr/local/bin/check-api.sh
+chmod +x /usr/local/bin/check-api.sh
+
+# Cron job ekleyin
 crontab -e
 ```
 
-Ekleyin:
+Ekleyin (her 5 dakikada bir):
 
 ```
-*/5 * * * * /home/KULLANICI_ADINIZ/check-api.sh
+*/5 * * * * /usr/local/bin/check-api.sh > /dev/null 2>&1 || echo "[$(date)] API health check FAILED" | mail -s "API Alert" admin@example.com
 ```
 
 ### 8.4. Kaynak Kullanımını İzleme
