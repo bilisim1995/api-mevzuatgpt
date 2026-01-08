@@ -46,7 +46,39 @@ echo "   API MevzuatGPT Deployment Script"
 echo "============================================"
 echo ""
 
-# 1. Dizin kontrolü
+# 1. Cargo kontrolü ve PATH yükleme
+log_info "Cargo kontrolü yapılıyor..."
+
+# Cargo'yu bulmaya çalış
+if ! command -v cargo &> /dev/null; then
+    log_warning "Cargo bulunamadı, Rust PATH yükleniyor..."
+    
+    # Standart Rust kurulum yollarını dene
+    if [ -f "$HOME/.cargo/env" ]; then
+        source "$HOME/.cargo/env"
+        log_success "Cargo PATH yüklendi: $HOME/.cargo/env"
+    elif [ -f "/root/.cargo/env" ]; then
+        source "/root/.cargo/env"
+        log_success "Cargo PATH yüklendi: /root/.cargo/env"
+    else
+        log_error "Cargo bulunamadı!"
+        log_error "Rust'ın kurulu olduğundan emin olun:"
+        log_error "  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
+        exit 1
+    fi
+    
+    # Tekrar kontrol et
+    if ! command -v cargo &> /dev/null; then
+        log_error "Cargo PATH yüklendikten sonra da bulunamadı!"
+        exit 1
+    fi
+fi
+
+CARGO_VERSION=$(cargo --version)
+log_success "Cargo bulundu: $CARGO_VERSION"
+echo ""
+
+# 2. Dizin kontrolü
 log_info "Proje dizini kontrol ediliyor..."
 if [ ! -d "$PROJECT_DIR" ]; then
     log_error "Proje dizini bulunamadı: $PROJECT_DIR"
@@ -57,7 +89,7 @@ cd "$PROJECT_DIR"
 log_success "Proje dizinine geçildi: $PROJECT_DIR"
 echo ""
 
-# 2. .env dosyası kontrolü
+# 3. .env dosyası kontrolü
 log_info ".env dosyası kontrol ediliyor..."
 if [ ! -f ".env" ]; then
     log_error ".env dosyası bulunamadı!"
@@ -66,7 +98,7 @@ fi
 log_success ".env dosyası mevcut"
 echo ""
 
-# 3. Uygulamayı derle
+# 4. Uygulamayı derle
 log_info "Uygulama derleniyor (release mode)..."
 echo "Bu işlem birkaç dakika sürebilir..."
 echo ""
@@ -79,17 +111,17 @@ else
 fi
 echo ""
 
-# 4. Binary boyutunu göster
+# 5. Binary boyutunu göster
 if [ -f "$BINARY_PATH" ]; then
     BINARY_SIZE=$(du -h "$BINARY_PATH" | cut -f1)
-    log_info "Binary boyutu: $BINARY_SIZE"
+    log_success "Binary boyutu: $BINARY_SIZE"
 fi
 echo ""
 
-# 5. Systemd servisini yeniden başlat
+# 6. Systemd servisini yeniden başlat
 log_info "Systemd servisi yeniden başlatılıyor..."
 
-if sudo systemctl restart "$SERVICE_NAME"; then
+if systemctl restart "$SERVICE_NAME"; then
     log_success "Servis başarıyla yeniden başlatıldı"
 else
     log_error "Servis yeniden başlatılamadı!"
@@ -97,21 +129,21 @@ else
 fi
 echo ""
 
-# 6. Servis durumunu kontrol et
+# 7. Servis durumunu kontrol et
 log_info "Servis durumu kontrol ediliyor..."
 sleep 2  # Servisin başlaması için kısa bir bekleme
 
-if sudo systemctl is-active --quiet "$SERVICE_NAME"; then
+if systemctl is-active --quiet "$SERVICE_NAME"; then
     log_success "Servis aktif durumda"
 else
     log_error "Servis çalışmıyor!"
     log_info "Servis logları:"
-    sudo journalctl -u "$SERVICE_NAME" -n 20 --no-pager
+    journalctl -u "$SERVICE_NAME" -n 20 --no-pager
     exit 1
 fi
 echo ""
 
-# 7. Health check
+# 8. Health check
 log_info "Health check yapılıyor..."
 HEALTH_CHECK_SUCCESS=false
 
@@ -126,7 +158,7 @@ for i in $(seq 1 $MAX_HEALTH_CHECK_ATTEMPTS); do
         if [ $i -eq $MAX_HEALTH_CHECK_ATTEMPTS ]; then
             log_error "Health check başarısız! (HTTP $HTTP_CODE)"
             log_info "Servis logları:"
-            sudo journalctl -u "$SERVICE_NAME" -n 20 --no-pager
+            journalctl -u "$SERVICE_NAME" -n 20 --no-pager
         else
             echo -n "."
             sleep $HEALTH_CHECK_INTERVAL
@@ -137,12 +169,12 @@ echo ""
 
 if [ "$HEALTH_CHECK_SUCCESS" = false ]; then
     log_error "API yanıt vermiyor!"
-    log_info "Servis loglarını kontrol edin: sudo journalctl -u $SERVICE_NAME -n 50"
+    log_info "Servis loglarını kontrol edin: journalctl -u $SERVICE_NAME -n 50"
     exit 1
 fi
 echo ""
 
-# 8. Deployment özeti
+# 9. Deployment özeti
 echo "============================================"
 echo "   DEPLOYMENT BAŞARILI! ✓"
 echo "============================================"
@@ -154,9 +186,9 @@ echo "  - Servis durumu: Aktif"
 echo "  - Health check: OK"
 echo ""
 log_info "Faydalı komutlar:"
-echo "  - Logları izle: sudo journalctl -u $SERVICE_NAME -f"
-echo "  - Servis durumu: sudo systemctl status $SERVICE_NAME"
-echo "  - Son loglar: sudo tail -f /var/log/api-mevzuatgpt/app.log"
+echo "  - Logları izle: journalctl -u $SERVICE_NAME -f"
+echo "  - Servis durumu: systemctl status $SERVICE_NAME"
+echo "  - Son loglar: tail -f /var/log/api-mevzuatgpt/app.log"
 echo ""
 log_success "Deployment tamamlandı! 🚀"
 

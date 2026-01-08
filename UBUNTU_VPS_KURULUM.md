@@ -530,9 +530,13 @@ cd /opt/api-mevzuatgpt
 # Scripti çalıştırılabilir yapın (ilk seferde)
 chmod +x deploy.sh
 
-# Deployment'ı başlatın
+# Deployment'ı başlatın (sudo ile çalıştırın)
 sudo ./deploy.sh
 ```
+
+**Önemli:** Script sudo ile çalıştırılmalıdır çünkü:
+- Systemd servisini yeniden başlatması gerekir
+- Script otomatik olarak Cargo PATH'ini yükler (sudo ile çalışırken kaybolsa bile)
 
 Script çalıştığında:
 1. Proje dizinini ve .env dosyasını kontrol eder
@@ -548,11 +552,16 @@ Script çalıştığında:
    API MevzuatGPT Deployment Script
 ============================================
 
-[INFO] Proje dizinine geçildi: /opt/api-mevzuatgpt
-[INFO] .env dosyası mevcut
+[INFO] Cargo kontrolü yapılıyor...
+[SUCCESS] Cargo bulundu: cargo 1.75.0
+[SUCCESS] Proje dizinine geçildi: /opt/api-mevzuatgpt
+[SUCCESS] .env dosyası mevcut
+
 [INFO] Uygulama derleniyor (release mode)...
+Bu işlem birkaç dakika sürebilir...
+
 [SUCCESS] Derleme başarılı!
-[INFO] Binary boyutu: 15M
+[SUCCESS] Binary boyutu: 15M
 [SUCCESS] Servis başarıyla yeniden başlatıldı
 [SUCCESS] Servis aktif durumda
 [SUCCESS] Health check başarılı! (HTTP 200)
@@ -636,7 +645,30 @@ sudo ./deploy.sh
 
 ## 10. Sorun Giderme
 
-### 10.1. Servis Başlamıyor
+### 10.1. Cargo Bulunamadı Hatası
+
+Eğer `cargo: command not found` hatası alıyorsanız:
+
+```bash
+# Rust'ın kurulu olup olmadığını kontrol edin
+cargo --version
+
+# Eğer bulunamıyorsa, Rust'ı kurun
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+# Kurulum sonrası PATH'i yükleyin
+source $HOME/.cargo/env
+
+# VEYA root kullanıcısı için
+source /root/.cargo/env
+
+# Tekrar deneyin
+sudo ./deploy.sh
+```
+
+**Not:** Deploy scripti otomatik olarak Cargo PATH'ini yüklemeye çalışır, ancak Rust'ın kurulu olması gerekir.
+
+### 10.2. Servis Başlamıyor
 
 ```bash
 # Detaylı hata mesajlarını görün
@@ -647,7 +679,7 @@ cd /opt/api-mevzuatgpt
 ./target/release/api-mevzuatgpt
 ```
 
-### 10.2. MongoDB Bağlantı Hatası
+### 10.3. MongoDB Bağlantı Hatası
 
 ```bash
 # .env dosyasını kontrol edin
@@ -660,7 +692,7 @@ sudo systemctl status mongod  # Local MongoDB için
 mongosh "MONGODB_URI"
 ```
 
-### 10.3. Port Zaten Kullanımda
+### 10.4. Port Zaten Kullanımda
 
 ```bash
 # Hangi process 8080 portunu kullanıyor?
@@ -673,7 +705,7 @@ sudo netstat -tulpn | grep 8080
 sudo kill -9 PID
 ```
 
-### 10.4. İzin Hataları
+### 10.5. İzin Hataları
 
 ```bash
 # Dizin sahipliğini düzeltin
@@ -683,7 +715,7 @@ sudo chown -R www-data:www-data /opt/api-mevzuatgpt
 sudo chown -R www-data:www-data /var/log/api-mevzuatgpt
 ```
 
-### 10.5. Yüksek Memory Kullanımı
+### 10.6. Yüksek Memory Kullanımı
 
 ```bash
 # Rust log seviyesini düşürün
