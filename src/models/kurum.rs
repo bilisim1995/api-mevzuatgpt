@@ -34,3 +34,18 @@ pub struct InstitutionsListResponse {
     pub message: String,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct KurumBySlugData {
+    pub kurum_id: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct KurumBySlugResponse {
+    pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<KurumBySlugData>,
+    pub message: String,
+}
+

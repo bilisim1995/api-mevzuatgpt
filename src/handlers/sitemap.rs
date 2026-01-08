@@ -1,5 +1,5 @@
 use actix_web::{web, HttpResponse};
-use mongodb::{Collection, bson::{doc, oid::ObjectId, Document as MongoDocument}};
+use mongodb::{Collection, bson::{doc, Document as MongoDocument}};
 use crate::config::AppState;
 use crate::models::sitemap::{
     SitemapInstitution, SitemapDocument,
@@ -21,53 +21,28 @@ fn create_slug_from_name(name: &str) -> String {
         .replace('ü', "u")
 }
 
-// Helper function to get kurum_adi by kurum_id
-async fn get_kurum_adi_by_id(
-    kurum_collection: &Collection<MongoDocument>,
-    kurum_id: &str,
-) -> Option<String> {
-    if let Ok(kurum_oid) = ObjectId::parse_str(kurum_id) {
-        if let Ok(Some(kurum_doc)) = kurum_collection
-            .find_one(doc! { "_id": kurum_oid }, None)
-            .await
-        {
-            return kurum_doc
-                .get_str("kurum_adi")
-                .or_else(|_| kurum_doc.get_str("kurumAdi"))
-                .ok()
-                .map(|s| s.to_string());
-        }
-    }
-    None
-}
-
 // GetSitemapInstitutions returns all institutions for sitemap
 pub async fn get_sitemap_institutions(state: web::Data<AppState>) -> HttpResponse {
-    let metadata_collection: Collection<MongoDocument> = state.db.collection("metadata");
     let kurum_collection: Collection<MongoDocument> = state.db.collection("kurumlar");
 
-    // Aggregation pipeline to get unique institutions with document counts by kurum_id
-    let pipeline = vec![
-        doc! {
-            "$match": {
-                "status": "aktif"
+    // Tüm kurumları al
+    let kurum_docs = match kurum_collection.find(None, None).await {
+        Ok(cursor) => {
+            match cursor.try_collect::<Vec<_>>().await {
+                Ok(docs) => docs,
+                Err(e) => {
+                    log::error!("Kurum deserialize hatası: {}", e);
+                    return HttpResponse::InternalServerError().json(SitemapInstitutionsResponse {
+                        success: false,
+                        data: vec![],
+                        count: 0,
+                        message: "Kurumlar alınamadı".to_string(),
+                    });
+                }
             }
-        },
-        doc! {
-            "$group": {
-                "_id": "$kurum_id",
-                "count": { "$sum": 1 }
-            }
-        },
-        doc! {
-            "$sort": { "_id": 1 }
-        },
-    ];
-
-    let mut cursor = match metadata_collection.aggregate(pipeline, None).await {
-        Ok(cursor) => cursor,
+        }
         Err(e) => {
-            log::error!("Kurumlar aggregation hatası: {}", e);
+            log::error!("MongoDB sorgu hatası: {}", e);
             return HttpResponse::InternalServerError().json(SitemapInstitutionsResponse {
                 success: false,
                 data: vec![],
@@ -79,31 +54,25 @@ pub async fn get_sitemap_institutions(state: web::Data<AppState>) -> HttpRespons
 
     let mut institutions: Vec<SitemapInstitution> = Vec::new();
 
-    while let Ok(true) = cursor.advance().await {
-        if let Ok(result_doc) = cursor.deserialize_current() {
-            let kurum_id = match result_doc.get_str("_id") {
-                Ok(id) => id,
-                Err(_) => continue,
-            };
+    for doc_map in kurum_docs {
+        let kurum_adi = doc_map
+            .get_str("kurum_adi")
+            .or_else(|_| doc_map.get_str("kurumAdi"))
+            .unwrap_or("")
+            .to_string();
 
-            let count = result_doc.get_i32("count").unwrap_or(0);
-
-            // Get kurum info from database using kurum_id
-            if let Some(kurum_adi) = get_kurum_adi_by_id(&kurum_collection, kurum_id).await {
-                if kurum_adi == "Bilinmeyen Kurum" {
-                    continue; // Skip unknown institutions
-                }
-
-                // Create slug from institution name
-                let slug = create_slug_from_name(&kurum_adi);
-
-                institutions.push(SitemapInstitution {
-                    kurum_adi,
-                    count,
-                    slug,
-                });
-            }
+        // Boş veya "Bilinmeyen Kurum" olanları atla
+        if kurum_adi.is_empty() || kurum_adi == "Bilinmeyen Kurum" {
+            continue;
         }
+
+        // Create slug from institution name
+        let slug = create_slug_from_name(&kurum_adi);
+
+        institutions.push(SitemapInstitution {
+            kurum_adi,
+            slug,
+        });
     }
 
     let count = institutions.len();
@@ -111,26 +80,22 @@ pub async fn get_sitemap_institutions(state: web::Data<AppState>) -> HttpRespons
         success: true,
         data: institutions,
         count,
-        message: "Sitemap kurumları başarıyla alındı".to_string(),
+        message: "Başarılı".to_string(),
     })
 }
 
 // GetSitemapAllDocuments returns all documents for sitemap
 pub async fn get_sitemap_all_documents(state: web::Data<AppState>) -> HttpResponse {
     let metadata_collection: Collection<MongoDocument> = state.db.collection("metadata");
-    let kurum_collection: Collection<MongoDocument> = state.db.collection("kurumlar");
 
     let filter = doc! {
         "status": "aktif"
     };
 
     let find_options = mongodb::options::FindOptions::builder()
-        .sort(doc! { "belge_yayin_tarihi": -1 })
+        .sort(doc! { "olusturulma_tarihi": -1 })
         .projection(doc! {
             "url_slug": 1,
-            "pdf_adi": 1,
-            "kurum_id": 1,
-            "belge_yayin_tarihi": 1,
             "olusturulma_tarihi": 1
         })
         .build();
@@ -161,30 +126,22 @@ pub async fn get_sitemap_all_documents(state: web::Data<AppState>) -> HttpRespon
         }
     };
 
-    // Convert to sitemap format with kurum_adi from database
+    // Convert to sitemap format
     let mut documents: Vec<SitemapDocument> = Vec::new();
     for doc_map in raw_documents {
-        let kurum_id = doc_map.get_str("kurum_id").unwrap_or("");
-        let kurum_adi = get_kurum_adi_by_id(&kurum_collection, kurum_id)
-            .await
-            .unwrap_or_else(|| "Bilinmeyen Kurum".to_string());
-
+        let id = doc_map
+            .get_object_id("_id")
+            .map(|oid| oid.to_hex())
+            .unwrap_or_default();
         let url_slug = doc_map.get_str("url_slug").unwrap_or("").to_string();
-        let pdf_adi = doc_map.get_str("pdf_adi").unwrap_or("").to_string();
-        let belge_yayin_tarihi = doc_map
-            .get_str("belge_yayin_tarihi")
-            .unwrap_or("")
-            .to_string();
         let olusturulma_tarihi = doc_map
             .get_str("olusturulma_tarihi")
             .unwrap_or("")
             .to_string();
 
         documents.push(SitemapDocument {
+            id,
             url_slug,
-            pdf_adi,
-            kurum_adi,
-            belge_yayin_tarihi,
             olusturulma_tarihi,
         });
     }
