@@ -5,15 +5,12 @@ use crate::models::document::{
     DocumentResponse, DocumentsListResponse,
     DocumentDetailResponse, DocumentDetailData, DocumentMetadata, DocumentContent
 };
-use crate::models::document_filters::{DocumentFiltersResponse, DocumentFiltersData};
-use std::collections::HashSet;
 use regex;
 use chrono::Utc;
 use futures::{future, FutureExt};
 
 #[derive(serde::Deserialize)]
-pub struct DocumentQuery {
-    pub kurum_id: Option<String>,
+pub struct DocumentQueryV2 {
     pub limit: Option<u64>,
     pub offset: Option<u64>,
     pub sort_by: Option<String>,
@@ -22,12 +19,11 @@ pub struct DocumentQuery {
     pub etiketler: Option<String>,
 }
 
-pub async fn get_documents(
+pub async fn get_documents_yargitay(
     state: web::Data<AppState>,
-    query: web::Query<DocumentQuery>,
+    query: web::Query<DocumentQueryV2>,
 ) -> HttpResponse {
-    let metadata_collection: Collection<MongoDocument> =
-        state.db.collection("metadata");
+    let metadata_collection: Collection<MongoDocument> = state.db.collection("yargitay");
 
     // Query parametrelerini al
     let limit = query.limit.unwrap_or(10000).min(10000); // Maksimum 10000
@@ -38,27 +34,21 @@ pub async fn get_documents(
 
     // Match stage için filter oluştur
     let mut match_filter = doc! {};
-    
-    if let Some(kurum_id) = &query.kurum_id {
-        match_filter.insert("kurum_id", kurum_id);
-    }
-    
+
     // belge_turu filtresi
     if let Some(belge_turu) = &query.belge_turu {
         if !belge_turu.is_empty() {
             match_filter.insert("belge_turu", belge_turu);
         }
     }
-    
+
     // etiketler filtresi (virgülle ayrılmış string içinde arama)
     if let Some(etiketler) = &query.etiketler {
         if !etiketler.is_empty() {
-            // Etiketler virgülle ayrılmış string içinde belirli bir etiketin geçip geçmediğini kontrol et
-            // Regex ile etiketin virgülle ayrılmış listede geçip geçmediğini kontrol et
             let regex_pattern = format!(r"(^|,\s*){}(,|$)", regex::escape(etiketler));
             match_filter.insert("etiketler", doc! {
                 "$regex": regex_pattern,
-                "$options": "i" // case insensitive
+                "$options": "i"
             });
         }
     }
@@ -69,41 +59,16 @@ pub async fn get_documents(
     // Aggregation pipeline oluştur
     let mut pipeline = vec![
         doc! { "$match": match_filter },
-        doc! {
-            "$addFields": {
-                "kurum_id_object": {
-                    "$toObjectId": "$kurum_id"
-                }
-            }
-        },
         doc! { "$sort": { sort_by: sort_value } },
     ];
-    
+
     // Offset varsa $skip ekle
     if offset > 0 {
         pipeline.push(doc! { "$skip": offset as i64 });
     }
-    
+
     // Limit ekle
     pipeline.push(doc! { "$limit": limit as i64 });
-    
-    // Lookup ve unwind ekle
-    pipeline.extend(vec![
-        doc! {
-            "$lookup": {
-                "from": "kurumlar",
-                "localField": "kurum_id_object",
-                "foreignField": "_id",
-                "as": "kurum_bilgisi"
-            }
-        },
-        doc! {
-            "$unwind": {
-                "path": "$kurum_bilgisi",
-                "preserveNullAndEmptyArrays": true
-            }
-        },
-    ]);
 
     // Aggregation çalıştır
     let mut cursor = match metadata_collection.aggregate(pipeline, None).await {
@@ -124,7 +89,6 @@ pub async fn get_documents(
     // Sonuçları işle
     while let Ok(true) = cursor.advance().await {
         if let Ok(doc_map) = cursor.deserialize_current() {
-            // Sadece istenen alanları al
             let url_slug = doc_map
                 .get_str("url_slug")
                 .unwrap_or("")
@@ -236,133 +200,11 @@ pub async fn get_documents(
     })
 }
 
-pub async fn get_document_filters(
-    state: web::Data<AppState>,
-    query: web::Query<DocumentQuery>,
-) -> HttpResponse {
-    let metadata_collection: Collection<MongoDocument> = state.db.collection("metadata");
-    
-    // Match stage için filter oluştur (sadece kurum_id filtresi)
-    let mut match_filter = doc! {};
-    
-    if let Some(kurum_id) = &query.kurum_id {
-        match_filter.insert("kurum_id", kurum_id);
-    }
-    
-    // belge_turu unique değerlerini al
-    let belge_turu_pipeline = vec![
-        doc! { "$match": match_filter.clone() },
-        doc! {
-            "$group": {
-                "_id": {
-                    "$cond": {
-                        "if": { "$or": [
-                            { "$eq": ["$belge_turu", null] },
-                            { "$eq": ["$belge_turu", ""] }
-                        ]},
-                        "then": "Belirtilmemiş",
-                        "else": "$belge_turu"
-                    }
-                }
-            }
-        },
-        doc! {
-            "$project": {
-                "belge_turu": "$_id",
-                "_id": 0
-            }
-        },
-        doc! {
-            "$sort": { "belge_turu": 1 }
-        },
-    ];
-    
-    let mut belge_turu_list: Vec<String> = Vec::new();
-    match metadata_collection.aggregate(belge_turu_pipeline, None).await {
-        Ok(mut cursor) => {
-            while let Ok(true) = cursor.advance().await {
-                if let Ok(doc_map) = cursor.deserialize_current() {
-                    if let Ok(belge_turu) = doc_map.get_str("belge_turu") {
-                        belge_turu_list.push(belge_turu.to_string());
-                    }
-                }
-            }
-        }
-        Err(e) => {
-            log::error!("Belge türü listesi alınamadı: {}", e);
-            return HttpResponse::InternalServerError().json(DocumentFiltersResponse {
-                success: false,
-                data: DocumentFiltersData {
-                    belge_turu: vec![],
-                    etiketler: vec![],
-                },
-                message: None,
-                error: Some("Belge türü listesi alınamadı".to_string()),
-            });
-        }
-    }
-    
-    // etiketler unique değerlerini al
-    let etiketler_pipeline = vec![
-        doc! { "$match": match_filter },
-        doc! {
-            "$project": {
-                "etiketler": 1
-            }
-        },
-    ];
-    
-    let mut etiketler_set: HashSet<String> = HashSet::new();
-    match metadata_collection.aggregate(etiketler_pipeline, None).await {
-        Ok(mut cursor) => {
-            while let Ok(true) = cursor.advance().await {
-                if let Ok(doc_map) = cursor.deserialize_current() {
-                    if let Ok(etiketler_str) = doc_map.get_str("etiketler") {
-                        // Virgülle ayrılmış etiketleri parse et
-                        for etiket in etiketler_str.split(',') {
-                            let trimmed = etiket.trim();
-                            if !trimmed.is_empty() {
-                                etiketler_set.insert(trimmed.to_string());
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        Err(e) => {
-            log::error!("Etiket listesi alınamadı: {}", e);
-            return HttpResponse::InternalServerError().json(DocumentFiltersResponse {
-                success: false,
-                data: DocumentFiltersData {
-                    belge_turu: belge_turu_list,
-                    etiketler: vec![],
-                },
-                message: None,
-                error: Some("Etiket listesi alınamadı".to_string()),
-            });
-        }
-    }
-    
-    let mut etiketler_list: Vec<String> = etiketler_set.into_iter().collect();
-    etiketler_list.sort();
-    
-    HttpResponse::Ok().json(DocumentFiltersResponse {
-        success: true,
-        data: DocumentFiltersData {
-            belge_turu: belge_turu_list,
-            etiketler: etiketler_list,
-        },
-        message: Some("Filtre listeleri başarıyla alındı".to_string()),
-        error: None,
-    })
-}
-
-pub async fn get_document_by_slug(
+pub async fn get_document_by_slug_yargitay(
     state: web::Data<AppState>,
     slug: web::Path<String>,
 ) -> HttpResponse {
-    let metadata_collection: Collection<MongoDocument> = state.db.collection("metadata");
-    let content_collection: Collection<MongoDocument> = state.db.collection("content");
+    let metadata_collection: Collection<MongoDocument> = state.db.collection("yargitay");
     let kurum_collection: Collection<MongoDocument> = state.db.collection("kurumlar");
 
     // Metadata'yı url_slug ile bul
@@ -524,29 +366,16 @@ pub async fn get_document_by_slug(
         .filter(|value| !value.is_empty())
         .map(|value| value.to_string());
 
-    // Kurum ve Content sorgularını paralel çalıştır (performans iyileştirmesi)
+    // Kurum bilgilerini çek
     let kurum_oid_result = ObjectId::parse_str(&kurum_id);
-    let metadata_oid = metadata_doc.get_object_id("_id").ok();
-    
-    // Paralel sorguları hazırla
     let kurum_future = if let Ok(kurum_oid) = kurum_oid_result {
         kurum_collection.find_one(doc! { "_id": kurum_oid }, None).boxed()
     } else {
         future::ready(Ok(None::<MongoDocument>)).boxed()
     };
-    
-    let content_future = if let Some(oid) = metadata_oid {
-        // Önce ObjectId ile dene
-        content_collection.find_one(doc! { "metadata_id": oid }, None).boxed()
-    } else {
-        // String ile dene
-        content_collection.find_one(doc! { "metadata_id": &metadata_id }, None).boxed()
-    };
-    
-    // Paralel çalıştır
-    let (kurum_result, content_result) = future::join(kurum_future, content_future).await;
-    
-    // Kurum bilgilerini işle
+
+    let kurum_result = kurum_future.await;
+
     let (kurum_adi, kurum_logo, kurum_aciklama) = match kurum_result {
         Ok(Some(kurum_doc)) => {
             let kurum_adi = kurum_doc
@@ -568,99 +397,26 @@ pub async fn get_document_by_slug(
         }
         _ => (String::new(), String::new(), String::new()),
     };
-    
-    // Content'i işle
-    let (content_id, icerik, content_olusturulma_tarihi) = match content_result {
-        Ok(Some(content_doc)) => {
-            let content_id = content_doc
-                .get_object_id("_id")
-                .map(|oid| oid.to_hex())
-                .unwrap_or_default();
 
-            // icerik alanını farklı isimlerle deneyelim
-            let icerik = content_doc
-                .get_str("icerik")
-                .or_else(|_| content_doc.get_str("content"))
-                .or_else(|_| content_doc.get_str("text"))
-                .unwrap_or("")
-                .to_string();
+    let icerik = metadata_doc
+        .get_str("icerik")
+        .or_else(|_| metadata_doc.get_str("content"))
+        .or_else(|_| metadata_doc.get_str("text"))
+        .unwrap_or("")
+        .to_string();
 
-            // olusturulma_tarihi'ni ISO formatına çevir
-            let olusturulma_tarihi = match content_doc
-                .get_str("olusturulma_tarihi")
-                .or_else(|_| content_doc.get_str("created_at"))
-            {
-                Ok(s) => {
-                    if s.contains('T') || s.contains('Z') {
-                        s.to_string()
-                    } else {
-                        format!("{}T00:00:00Z", s)
-                    }
-                }
-                Err(_) => match metadata_doc.get_str("olusturulma_tarihi") {
-                    Ok(s) => {
-                        if s.contains('T') || s.contains('Z') {
-                            s.to_string()
-                        } else {
-                            format!("{}T00:00:00Z", s)
-                        }
-                    }
-                    Err(_) => String::from(Utc::now().to_rfc3339()),
-                },
-            };
-
-            (content_id, icerik, olusturulma_tarihi)
-        }
-        _ => {
-            // Content bulunamadıysa string ile de dene (fallback)
-            match content_collection
-                .find_one(doc! { "metadata_id": &metadata_id }, None)
-                .await
-            {
-                Ok(Some(content_doc)) => {
-                    let content_id = content_doc
-                        .get_object_id("_id")
-                        .map(|oid| oid.to_hex())
-                        .unwrap_or_default();
-
-                    let icerik = content_doc
-                        .get_str("icerik")
-                        .or_else(|_| content_doc.get_str("content"))
-                        .or_else(|_| content_doc.get_str("text"))
-                        .unwrap_or("")
-                        .to_string();
-
-                    let olusturulma_tarihi = match content_doc
-                        .get_str("olusturulma_tarihi")
-                        .or_else(|_| content_doc.get_str("created_at"))
-                    {
-                        Ok(s) => {
-                            if s.contains('T') || s.contains('Z') {
-                                s.to_string()
-                            } else {
-                                format!("{}T00:00:00Z", s)
-                            }
-                        }
-                        Err(_) => match metadata_doc.get_str("olusturulma_tarihi") {
-                            Ok(s) => {
-                                if s.contains('T') || s.contains('Z') {
-                                    s.to_string()
-                                } else {
-                                    format!("{}T00:00:00Z", s)
-                                }
-                            }
-                            Err(_) => String::from(Utc::now().to_rfc3339()),
-                        },
-                    };
-
-                    (content_id, icerik, olusturulma_tarihi)
-                }
-                _ => {
-                    log::warn!("Content bulunamadı - metadata_id: {}", metadata_id);
-                    (String::new(), String::new(), String::new())
-                }
+    let content_olusturulma_tarihi = match metadata_doc
+        .get_str("olusturulma_tarihi")
+        .or_else(|_| metadata_doc.get_str("created_at"))
+    {
+        Ok(s) => {
+            if s.contains('T') || s.contains('Z') {
+                s.to_string()
+            } else {
+                format!("{}T00:00:00Z", s)
             }
         }
+        Err(_) => String::from(Utc::now().to_rfc3339()),
     };
 
     HttpResponse::Ok().json(DocumentDetailResponse {
@@ -687,7 +443,7 @@ pub async fn get_document_by_slug(
                 karar_tarihi,
             },
             content: DocumentContent {
-                id: content_id,
+                id: String::new(),
                 metadata_id,
                 icerik,
                 olusturulma_tarihi: content_olusturulma_tarihi,
@@ -696,13 +452,11 @@ pub async fn get_document_by_slug(
             kurum_logo,
             kurum_aciklama,
         },
-        message: "İşlem başarılı".to_string(),
+        message: "Başarılı".to_string(),
     })
 }
 
-pub fn routes(cfg: &mut web::ServiceConfig) {
-    cfg.route("", web::get().to(get_documents))
-        .route("/filters", web::get().to(get_document_filters))
-        .route("/{slug}", web::get().to(get_document_by_slug));
+pub fn routes_v2(cfg: &mut web::ServiceConfig) {
+    cfg.route("", web::get().to(get_documents_yargitay))
+        .route("/{slug}", web::get().to(get_document_by_slug_yargitay));
 }
-

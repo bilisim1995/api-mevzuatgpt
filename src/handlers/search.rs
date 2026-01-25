@@ -19,7 +19,7 @@ pub async fn search(
 ) -> HttpResponse {
     // q parametresi boş olamaz
     if query.q.trim().is_empty() {
-        return HttpResponse::build(StatusCode::BAD_REQUEST).json(SearchResponseV2 {
+        return HttpResponse::build(StatusCode::BAD_REQUEST).json(SearchResponse {
             success: false,
             data: vec![],
             count: 0,
@@ -38,7 +38,7 @@ pub async fn search(
     let regex_obj = match Regex::new(&regex_pattern) {
         Ok(re) => re,
         Err(_) => {
-            return HttpResponse::InternalServerError().json(SearchResponseV2 {
+            return HttpResponse::InternalServerError().json(SearchResponse {
                 success: false,
                 data: vec![],
                 count: 0,
@@ -115,7 +115,7 @@ pub async fn search(
         Ok(count) => count,
         Err(e) => {
             log::error!("MongoDB count hatası: {}", e);
-            return HttpResponse::InternalServerError().json(SearchResponseV2 {
+            return HttpResponse::InternalServerError().json(SearchResponse {
                 success: false,
                 data: vec![],
                 count: 0,

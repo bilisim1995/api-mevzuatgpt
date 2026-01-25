@@ -1,5 +1,5 @@
 use actix_web::{web, HttpResponse};
-use mongodb::{Collection, bson::{doc, Document as MongoDocument}};
+use mongodb::{Collection, bson::{doc, Bson, Document as MongoDocument}};
 use crate::config::AppState;
 use crate::models::sitemap::{
     SitemapInstitution, SitemapDocument,
@@ -19,6 +19,16 @@ fn create_slug_from_name(name: &str) -> String {
         .replace('ö', "o")
         .replace('ş', "s")
         .replace('ü', "u")
+}
+
+fn get_date_string(doc: &MongoDocument, field: &str) -> String {
+    match doc.get(field) {
+        Some(Bson::DateTime(dt)) => dt.try_to_rfc3339_string().unwrap_or_default(),
+        Some(Bson::String(value)) => value.to_string(),
+        Some(Bson::Int64(value)) => value.to_string(),
+        Some(Bson::Int32(value)) => value.to_string(),
+        _ => String::new(),
+    }
 }
 
 // GetSitemapInstitutions returns all institutions for sitemap
@@ -98,6 +108,7 @@ pub async fn get_sitemap_all_documents(state: web::Data<AppState>) -> HttpRespon
             "url_slug": 1,
             "olusturulma_tarihi": 1
         })
+        .limit(5000)
         .build();
 
     let cursor = match metadata_collection.find(filter, find_options).await {
@@ -248,8 +259,82 @@ pub async fn get_sitemap_xml(state: web::Data<AppState>) -> HttpResponse {
         .body(xml)
 }
 
+// GetSitemapAllDocumentsYargitay returns all Yargitay documents for sitemap
+pub async fn get_sitemap_all_documents_yargitay(state: web::Data<AppState>) -> HttpResponse {
+    let metadata_collection: Collection<MongoDocument> = state.db.collection("yargitay");
+
+    let filter = doc! {
+        "status": "aktif"
+    };
+
+    let find_options = mongodb::options::FindOptions::builder()
+        .sort(doc! { "olusturulma_tarihi": -1 })
+        .projection(doc! {
+            "url_slug": 1,
+            "olusturulma_tarihi": 1
+        })
+        .limit(5000)
+        .build();
+
+    let cursor = match metadata_collection.find(filter, find_options).await {
+        Ok(cursor) => cursor,
+        Err(e) => {
+            log::error!("Yargıtay belgeleri sorgu hatası: {}", e);
+            return HttpResponse::InternalServerError().json(SitemapDocumentsResponse {
+                success: false,
+                data: vec![],
+                count: 0,
+                message: "Yargıtay belgeleri alınamadı".to_string(),
+            });
+        }
+    };
+
+    let raw_documents: Vec<MongoDocument> = match cursor.try_collect().await {
+        Ok(docs) => docs,
+        Err(e) => {
+            log::error!("Yargıtay belgeleri deserialize hatası: {}", e);
+            return HttpResponse::InternalServerError().json(SitemapDocumentsResponse {
+                success: false,
+                data: vec![],
+                count: 0,
+                message: "Yargıtay belgeleri alınamadı".to_string(),
+            });
+        }
+    };
+
+    let documents: Vec<SitemapDocument> = raw_documents
+        .into_iter()
+        .filter_map(|doc| {
+            let id = doc
+                .get_object_id("_id")
+                .map(|oid| oid.to_hex())
+                .unwrap_or_default();
+            let url_slug = doc.get_str("url_slug").ok()?.to_string();
+            let olusturulma_tarihi = get_date_string(&doc, "olusturulma_tarihi");
+
+            Some(SitemapDocument {
+                id,
+                url_slug,
+                olusturulma_tarihi,
+            })
+        })
+        .collect();
+
+    let count = documents.len();
+    HttpResponse::Ok().json(SitemapDocumentsResponse {
+        success: true,
+        data: documents,
+        count,
+        message: "Yargıtay sitemap belgeleri başarıyla alındı".to_string(),
+    })
+}
+
 pub fn routes(cfg: &mut web::ServiceConfig) {
     cfg.route("/institutions", web::get().to(get_sitemap_institutions))
-        .route("/all-documents", web::get().to(get_sitemap_all_documents));
+        .route("/all-documents", web::get().to(get_sitemap_all_documents))
+        .route(
+            "/all-documents-yargitay-1",
+            web::get().to(get_sitemap_all_documents_yargitay),
+        );
 }
 

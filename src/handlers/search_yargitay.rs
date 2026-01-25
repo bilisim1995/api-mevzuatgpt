@@ -239,14 +239,11 @@ pub async fn search_v2_yargitay(
             let mut content_preview = String::new();
             if let Ok(icerik_text) = metadata_doc.get_str("icerik_text") {
                 let icerik_text_lower = icerik_text.to_lowercase();
-                let mut content_matches = true;
 
                 if mongo_patterns.is_empty() {
                     if regex_obj.is_match(&icerik_text_lower) {
                         match_types.push("content".to_string());
                         content_count = regex_obj.find_iter(&icerik_text_lower).count() as u64;
-                    } else {
-                        content_matches = false;
                     }
                 } else {
                     for pattern in &mongo_patterns {
@@ -254,11 +251,10 @@ pub async fn search_v2_yargitay(
                         if icerik_text_lower.contains(&word.to_lowercase()) {
                             content_count += icerik_text_lower.matches(&word.to_lowercase()).count() as u64;
                         } else {
-                            content_matches = false;
                             break;
                         }
                     }
-                    if content_matches && content_count > 0 {
+                    if content_count > 0 {
                         match_types.push("content".to_string());
                     }
                 }
