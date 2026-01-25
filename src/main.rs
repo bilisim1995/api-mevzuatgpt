@@ -44,10 +44,12 @@ async fn main() -> io::Result<()> {
         let cors = Cors::default()
             .allowed_origin("https://mevzuatgpt.org")
             .allowed_origin("https://www.mevzuatgpt.org")
-            .allowed_methods(vec!["GET", "POST"])
+            .allowed_origin("http://localhost:3000")
+            .allowed_methods(vec!["GET", "POST", "OPTIONS"])
             .allowed_headers(vec![
                 actix_web::http::header::CONTENT_TYPE,
                 actix_web::http::header::ACCEPT,
+                actix_web::http::header::AUTHORIZATION,
             ])
             .max_age(3600);
 

@@ -37,6 +37,13 @@ pub struct DocumentResponse {
     pub etiketler: String,
     pub anahtar_kelimeler: String,
     pub pdf_url: String,
+    pub icerik: Option<String>,
+    #[serde(rename = "kararTarihi")]
+    pub karar_tarihi: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dosya_boyutu_mb: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sayfa_sayisi: Option<i32>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -69,6 +76,8 @@ pub struct DocumentMetadata {
     pub sayfa_sayisi: i32,
     pub dosya_boyutu_mb: f64,
     pub pdf_url: String,
+    #[serde(rename = "kararTarihi", skip_serializing_if = "Option::is_none")]
+    pub karar_tarihi: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
